@@ -1,22 +1,33 @@
+import os
 import string
 import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+from typing import List
 from config import config
+import numpy as np
+import pandas as pd
+import re
 
 from selenium import webdriver
 from selenium.webdriver.common.by import By
-from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.wait import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.common.action_chains import ActionChains
-
-import config.config
 
 
 def start_and_setup_webdriver() -> webdriver:
     options = webdriver.ChromeOptions()
     options.add_extension(Path(config.EXTENSIONS_DICT, 'u_block_extension.crx'))
+    options.add_experimental_option('detach', True)
+    options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36')
+    # Adding argument to disable the AutomationControlled flag
+    options.add_argument("--disable-blink-features=AutomationControlled")
+
+    # Exclude the collection of enable-automation switches
+    options.add_experimental_option("excludeSwitches", ["enable-automation"])
+
+    # Turn-off userAutomationExtension
+    options.add_experimental_option("useAutomationExtension", False)
     chr_driver = webdriver.Chrome(options=options)
     return chr_driver
 
@@ -42,34 +53,9 @@ def initial_run(driver: webdriver, cookie_btn_path: string = '//*[@id="consent-p
     return consent
 
 
-# Adds the cookie into current browser context
-# consent_btn = '//*[@id="consent-page"]/div/div/div/form/div[2]/div[2]/button[1]'
-# consent = False
-
-# driver.get('https://finance.yahoo.com/most-active')
-# if not consent:
-#     try:
-#         button = WebDriverWait(driver, 10).until(
-#             EC.element_to_be_clickable((By.XPATH, consent_btn))
-#         )
-#         driver.find_element(By.XPATH, consent_btn).click()
-#         consent = True
-#     except ValueError:
-#         driver.quit()
-#
-# try:
-#     element = WebDriverWait(driver, 10).until(
-#         EC.presence_of_element_located((By.XPATH, '//*[@id="scr-res-table"]/div[1]/table'))
-#     )
-# finally:
-#     driver.quit()
-
-
-def get_historical_data(driver: webdriver, symbol: string, start: datetime, end: datetime,
-                        frequency: string = '1d') -> None:
+def get_historical_data(symbol: string, start: string, end: string, frequency: string = '1d') -> None:
     """
     Fetch stock market data from the yahoo finance over a given period
-    :param driver: Webdriver for browsing the webpage
     :param symbol: Stock symbol
     :param start: Beginning of the period of time, valid format: "2021-09-08"
     :param end: End of the period of time, valid format: "2021-08-08"
@@ -97,6 +83,7 @@ def get_historical_data(driver: webdriver, symbol: string, start: datetime, end:
                      f'&interval={frequency}&filter=history&frequency={frequency}&includeAdjustedClose=true'
 
     # Browse webpage and accept cookies
+    driver = start_and_setup_webdriver()
     driver.get(historical_url)
     initial_run(driver)
 
@@ -109,7 +96,9 @@ def get_historical_data(driver: webdriver, symbol: string, start: datetime, end:
         driver.execute_script('window.scrollTo(0, document.getElementById("render-target-default").scrollHeight);')
         time.sleep(0.2)
         last_row = driver.find_element(By.CSS_SELECTOR,
-                                       '#Col1-1-HistoricalDataTable-Proxy > section > div.Pb\(10px\).Ovx\(a\).W\(100\%\) > table > tbody > tr:last-child > td.Py\(10px\).Ta\(start\).Pend\(10px\)')
+                                       '#Col1-1-HistoricalDataTable-Proxy > section > div.Pb\(10px\).Ovx\(a\).W\('
+                                       '100\%\) > table > tbody > tr:last-child > td.Py\(10px\).Ta\(start\).Pend\('
+                                       '10px\)')
         last_date = datetime.strptime(last_row.text, "%b %d, %Y").date()
         if str(last_date) == str(start.date()):
             print(last_date, '==', str(start.date()))
@@ -121,9 +110,26 @@ def get_historical_data(driver: webdriver, symbol: string, start: datetime, end:
         if i > 5:
             tmp_last_date = last_date
     stock_table = driver.find_element(By.XPATH, '//*[@id="Col1-1-HistoricalDataTable-Proxy"]/section/div[2]/table')
-    print(stock_table.text)
+
+    # Merge downloaded data into arrays and format it
+    tmp_arr: np.array = np.array(stock_table.text.split('\n'))
+    separated_data = [re.split(r'\s+(?!Close\*\*)', line) for line in tmp_arr[:-1] if 'Dividend' not in line]
+    stock_data: List = []
+    for i in range(1, len(separated_data)):
+        date = ' '.join(separated_data[i][:3])
+        stock_data.append([date] + separated_data[i][3:])
+    final_list = [separated_data[0]] + stock_data
+    # Join created arrays into Pandas DataFrame
+    df = pd.DataFrame(final_list[1:], columns=final_list[0])
+
+    # Create sub folder for stock symbol whether it doesn't exist
+    os.makedirs(Path(config.DATA_DICT, symbol), exist_ok=True)
+    # Save downloaded data into csv file
+    file_name: string = f'{symbol}_{start.date()}-{end.date()}.csv'
+    df.to_csv(Path(config.DATA_DICT, symbol, file_name), index_label=False, index=False)
+
+    # Quit the webdriver and close the browser
     driver.quit()
 
 
-chr_driver = start_and_setup_webdriver()
-get_historical_data(driver=chr_driver, symbol='NVDA', start='2019-07-06', end='2023-07-06', frequency='1d')
+get_historical_data(symbol='NVDA', start='2022-07-06', end='2023-07-06', frequency='1d')
