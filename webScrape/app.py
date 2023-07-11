@@ -1,5 +1,4 @@
 import os
-import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import List
@@ -37,7 +36,7 @@ def setup_webdriver() -> webdriver:
 
 
 def initial_run(driver: webdriver, cookie_btn_path: str = '//*[@id="consent-page"]/div/div/div/form/div[2]/div['
-                                                             '2]/button[1]', consent: bool = False):
+                                                          '2]/button[1]', consent: bool = False):
     """
     Accept cookies when scraper first launches
     :param driver: Webdriver for remote control and browsing the webpage
@@ -47,7 +46,7 @@ def initial_run(driver: webdriver, cookie_btn_path: str = '//*[@id="consent-page
     """
     if not consent:
         try:
-            button = WebDriverWait(driver, 10).until(
+            WebDriverWait(driver, 10).until(
                 EC.element_to_be_clickable((By.XPATH, cookie_btn_path))
             )
             driver.find_element(By.XPATH, cookie_btn_path).click()
@@ -68,20 +67,15 @@ def date_check(symbol: str, input_start_date: datetime, input_end_date: datetime
     # Create variable with path to the symbol dictionary
     dict_path = Path(config.DATA_DICT, symbol)
     # Convert date
-    start = input_start_date.date()
-    end = input_end_date.date()
+    input_start_date = input_start_date.date()
+    input_end_date = input_end_date.date()
     # Create list with all files inside the dictionary
     all_files = [item for item in os.listdir(dict_path) if os.path.isfile(os.path.join(dict_path, item))]
 
     for file in all_files:
-        file_date = file.split('_')[1].split('.')[0]
-        file_start = datetime.strptime(file_date[:10], '%Y-%m-%d').date()
-        file_end = datetime.strptime(file_date[11:], '%Y-%m-%d').date()
-
-        print(f'File {file}')
-        if file_start <= start <= file_end:
-            if file_start <= end <= file_end:
-                print(f'{start} -> PASSED')
+        file_start, file_end = extract_date_from_file(file)
+        if file_start <= input_start_date <= file_end:
+            if file_start <= input_end_date <= file_end:
                 return True
     return False
 
@@ -97,17 +91,9 @@ def get_historical_data(symbol: str, start: str, end: str, frequency: str = '1d'
 
     # Convert start and end time into datetime format
     start = datetime.strptime(start, '%Y-%m-%d')
+    start_to_file = start.date()
     end = datetime.strptime(end, '%Y-%m-%d')
-
-    # Check if passed days are not Saturday or Sundays
-    if start.weekday() == 5:
-        start = start + timedelta(days=2)
-    elif start.weekday() == 6:
-        start = start + timedelta(days=1)
-    elif end.weekday() == 5:
-        end = end + timedelta(days=2)
-    elif end.weekday() == 6:
-        end = end + timedelta(days=1)
+    end_to_file = end.date()
 
     if not date_check(symbol=symbol, input_start_date=start, input_end_date=end):
         # Convert time strings to timestamp format
@@ -121,28 +107,38 @@ def get_historical_data(symbol: str, start: str, end: str, frequency: str = '1d'
         driver.get(historical_url)
         initial_run(driver)
 
-        tmp_last_date = end
-        i = 0
-        WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.XPATH, '//*[@id="Col1-1-HistoricalDataTable-Proxy"]/section/div[2]/table'))
-        )
-        while True:
-            driver.execute_script('window.scrollTo(0, document.getElementById("render-target-default").scrollHeight);')
-            time.sleep(0.2)
-            last_row = driver.find_element(By.CSS_SELECTOR,
-                                           '#Col1-1-HistoricalDataTable-Proxy > section > div.Pb\(10px\).Ovx\(a\).W\('
-                                           '100\%\) > table > tbody > tr:last-child > td.Py\(10px\).Ta\(start\).Pend\('
-                                           '10px\)')
-            last_date = datetime.strptime(last_row.text, "%b %d, %Y").date()
-            if str(last_date) == str(start.date()):
-                print(last_date, '==', str(start.date()))
-                break
-            elif str(last_date) == str(tmp_last_date):
-                print('Endless loop')
-                break
-            i += 1
-            if i > 5:
-                tmp_last_date = last_date
+        all_data_loaded: bool = False
+        while not all_data_loaded:
+            # Variables to detect not loading website
+            tmp_last_date: datetime.date = end.date()
+            endless_loop: bool = False
+            i: int = 0
+            WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located(
+                    (By.XPATH, '//*[@id="Col1-1-HistoricalDataTable-Proxy"]/section/div[2]/table'))
+            )
+            while True:
+                driver.execute_script(
+                    'window.scrollTo(0, document.getElementById("render-target-default").scrollHeight);')
+                # time.sleep(0.2)
+                last_row = driver.find_element(By.CSS_SELECTOR,
+                                               '#Col1-1-HistoricalDataTable-Proxy > section > div.Pb\(10px\).Ovx\(a\).W\('
+                                               '100\%\) > table > tbody > tr:last-child > td.Py\(10px\).Ta\(start\).Pend\('
+                                               '10px\)')
+                last_date = datetime.strptime(last_row.text, "%b %d, %Y").date()
+                if start.date()-timedelta(days=4) < last_date < start.date()+timedelta(days=4):
+                    all_data_loaded = True
+                    break
+                elif str(last_date) == str(tmp_last_date):
+                    print('Endless loop', last_date, '=', tmp_last_date)
+                    endless_loop = True
+                    break
+                i += 1
+                if i > 10:
+                    tmp_last_date = last_date
+            if endless_loop:
+                print('Refreshing page!!!')
+                driver.refresh()
         stock_table = driver.find_element(By.XPATH, '//*[@id="Col1-1-HistoricalDataTable-Proxy"]/section/div[2]/table')
 
         # Merge downloaded data into arrays and format it
@@ -160,7 +156,7 @@ def get_historical_data(symbol: str, start: str, end: str, frequency: str = '1d'
         # Create sub folder for stock symbol whether it doesn't exist
         os.makedirs(Path(config.DATA_DICT, symbol), exist_ok=True)
         # Save downloaded data into csv file
-        file_name: str = f'{symbol}_{start.date()}-{end.date()}.csv'
+        file_name: str = f'{symbol}_{start_to_file}-{end_to_file}.csv'
         df.to_csv(Path(config.DATA_DICT, symbol, file_name), index_label=False, index=False)
 
         # Quit the webdriver and close the browser
@@ -169,5 +165,51 @@ def get_historical_data(symbol: str, start: str, end: str, frequency: str = '1d'
         print('Data in the given date range already exists')
 
 
+def embrace_files(symbol: str) -> None:
+    """
+    Embrace all the files and decide if delete any files
+    :param symbol: Stock symbol
+    :return:
+    """
+    try:
+        # Create path and list of all files inside the symbol dictionary
+        dict_path: Path = Path(config.DATA_DICT, symbol)
+        all_files = [item for item in os.listdir(dict_path) if os.path.isfile(Path(dict_path, item))]
+        # Loop over the list with files names
+        for file in all_files:
+            # Create an empty list of files to be deleted
+            delete_list: List = []
+            file_start, file_end = extract_date_from_file(file)
+            for inside_file in all_files:
+                if file == inside_file:
+                    pass
+                else:
+                    inside_file_start, inside_file_end = extract_date_from_file(inside_file)
+                    # Remove file from the directory if data already exists
+                    if file_start < inside_file_start and file_end >= inside_file_end:
+                        print(f'1. Removed file: {inside_file}')
+                        delete_list.append(inside_file)
+                        os.remove(Path(dict_path, inside_file))
+                    elif file_start <= inside_file_start and file_end > inside_file_end:
+                        print(f'2. Removed file: {inside_file}')
+                        delete_list.append(inside_file)
+                        os.remove(Path(dict_path, inside_file))
+            for elem in delete_list:
+                all_files.remove(elem)
+
+    # Raise exception if the directory for the symbol does not exist
+    except FileNotFoundError:
+        print(f'Dictionary for "{symbol}" was not found')
+
+
+def extract_date_from_file(file: str) -> (datetime.date, datetime.date):
+    file_date = file.split('_')[1].split('.')[0]
+    file_start = datetime.strptime(file_date[:10], '%Y-%m-%d').date()
+    file_end = datetime.strptime(file_date[11:], '%Y-%m-%d').date()
+    return file_start, file_end
+
+
 if __name__ == '__main__':
-    get_historical_data(symbol='NVDA', start='2021-07-06', end='2023-07-07', frequency='1d')
+    pass
+    get_historical_data(symbol='NVDA', start='2015-07-08', end='2023-07-11', frequency='1d')
+    embrace_files('NVDA')
