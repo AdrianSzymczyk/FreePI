@@ -15,7 +15,7 @@ from selenium.webdriver.support import expected_conditions as EC
 
 def setup_webdriver() -> webdriver:
     """
-    Create and configure webdriver options and add extensions
+    Create and configure webdriver options and add extensions.
     :return: Webdriver for remote access to browser
     """
     options = webdriver.ChromeOptions()
@@ -39,7 +39,7 @@ def setup_webdriver() -> webdriver:
 def initial_run(driver: webdriver, cookie_btn_path: str = '//*[@id="consent-page"]/div/div/div/form/div[2]/div['
                                                           '2]/button[1]', consent: bool = False):
     """
-    Accept cookies when scraper first launches
+    Accept cookies when scraper first launches.
     :param driver: Webdriver for remote control and browsing the webpage
     :param cookie_btn_path: String defining XPath to consent button, defaults: "//*[@id="consent-page"]/div/div/div/form/div[2]/div[2]/button[1]"
     :param consent: Determines whether cookies was accepted, defaults: False
@@ -57,12 +57,13 @@ def initial_run(driver: webdriver, cookie_btn_path: str = '//*[@id="consent-page
     return consent
 
 
-def date_check(symbol: str, input_start_date: datetime, input_end_date: datetime) -> bool:
+def date_and_freq_check(symbol: str, input_start_date: datetime, input_end_date: datetime, frequency: str) -> bool:
     """
-    Check whether the given date range is covered by existing files
+    Check whether the given date range is covered by existing files.
     :param symbol: String representing the stock symbol
     :param input_start_date: Beginning of the period of time, valid format: "2021-09-08"
     :param input_end_date: End of the period of time, valid format: "2021-08-08"
+    :param frequency: String defining the frequency of the data
     :return: Bool value whether to download new data
     """
     # Create variable with path to the symbol dictionary
@@ -75,30 +76,29 @@ def date_check(symbol: str, input_start_date: datetime, input_end_date: datetime
 
     for file in all_files:
         file_start, file_end = extract_date_from_file(file)
+        file_freq: str = file.split('=')[1].split('.')[0]
         if file_start <= input_start_date <= file_end:
             if file_start <= input_end_date <= file_end:
-                return True
+                if file_freq == frequency:
+                    return True
     return False
 
 
 def download_historical_data(symbol: str, start: str, end: str, frequency: str = '1d') -> None:
     """
-    Fetch stock market data from the yahoo finance over a given period
+    Fetch stock market data from the yahoo finance over a given period.
     :param symbol: Stock symbol
     :param start: Beginning of the period of time, valid format: "2021-09-08"
     :param end: End of the period of time, valid format: "2021-08-08"
     :param frequency: String defining the frequency of the data, defaults-1d, possible values: [1d, 1wk, 1mo]
     """
-    # TODO: Embrace frequency of data:
-    #  - save frequency in the name of the file
-    #  - check the frequency
     # Convert start and end time into datetime format
     start = datetime.strptime(start, '%Y-%m-%d')
     start_to_file = start.date()
     end = datetime.strptime(end, '%Y-%m-%d')
     end_to_file = end.date()
 
-    if not date_check(symbol=symbol, input_start_date=start, input_end_date=end):
+    if not date_and_freq_check(symbol=symbol, input_start_date=start, input_end_date=end, frequency=frequency):
         # Convert time strings to timestamp format
         start_time: int = int(start.replace(tzinfo=timezone.utc).timestamp())
         end_time: int = int(end.replace(tzinfo=timezone.utc).timestamp())
@@ -126,7 +126,18 @@ def download_historical_data(symbol: str, start: str, end: str, frequency: str =
                 # time.sleep(0.2)
                 last_row = driver.find_element(By.CSS_SELECTOR, '#Col1-1-HistoricalDataTable-Proxy > section > div.Pb\(10px\).Ovx\(a\).W\(100\%\) > table > tbody > tr:last-child > td.Py\(10px\).Ta\(start\)')
                 last_date = datetime.strptime(last_row.text, "%b %d, %Y").date()
-                if start.date()-timedelta(days=4) < last_date < start.date()+timedelta(days=4):
+                # Adjust lower and upper limits of last displayed date
+                if frequency == '1wk':
+                    lower_start_limit = start.date()-timedelta(days=7)
+                    upper_start_limit = start.date() + timedelta(days=7)
+                elif frequency == '1mo':
+                    lower_start_limit = start.date() - timedelta(days=31)
+                    upper_start_limit = start.date() + timedelta(days=31)
+                else:
+                    lower_start_limit = start.date() - timedelta(days=4)
+                    upper_start_limit = start.date() + timedelta(days=4)
+                # Check whether all the data loaded
+                if lower_start_limit < last_date < upper_start_limit:
                     all_data_loaded = True
                     break
                 elif str(last_date) == str(tmp_last_date):
@@ -156,7 +167,7 @@ def download_historical_data(symbol: str, start: str, end: str, frequency: str =
         # Create sub folder for stock symbol whether it doesn't exist
         os.makedirs(Path(config.DATA_DICT, symbol), exist_ok=True)
         # Save downloaded data into csv file
-        file_name: str = f'{symbol}_{start_to_file}-{end_to_file}.csv'
+        file_name: str = f'{symbol}_{start_to_file}-{end_to_file}&freq={frequency}.csv'
         df.to_csv(Path(config.DATA_DICT, symbol, file_name), index_label=False, index=False)
 
         # Quit the webdriver and close the browser
@@ -167,7 +178,7 @@ def download_historical_data(symbol: str, start: str, end: str, frequency: str =
 
 def embrace_files(symbol: str) -> None:
     """
-    Embrace all the files and decide if delete any files
+    Embrace all the files and decide if delete any files.
     :param symbol: Stock symbol
     :return:
     """
@@ -179,18 +190,23 @@ def embrace_files(symbol: str) -> None:
         for file in all_files:
             # Create an empty list of files to be deleted
             delete_list: List[str] = []
+            # Create a variables with a date range
             file_start, file_end = extract_date_from_file(file)
+            # Create a variable with frequency of the data
+            frequency: str = file.split('=')[1].split('.')[0]
             for inside_file in all_files:
                 if file == inside_file:
                     pass
                 else:
+                    # Variables for inside file
                     inside_file_start, inside_file_end = extract_date_from_file(inside_file)
+                    inside_freq: str = inside_file.split('=')[1].split('.')[0]
                     # Remove file from the directory if data already exists
-                    if file_start < inside_file_start and file_end >= inside_file_end:
+                    if file_start < inside_file_start and file_end >= inside_file_end and frequency == inside_freq:
                         print(f'1. Removed file: {inside_file}')
                         delete_list.append(inside_file)
                         os.remove(Path(dict_path, inside_file))
-                    elif file_start <= inside_file_start and file_end > inside_file_end:
+                    elif file_start <= inside_file_start and file_end > inside_file_end and frequency == inside_freq:
                         print(f'2. Removed file: {inside_file}')
                         delete_list.append(inside_file)
                         os.remove(Path(dict_path, inside_file))
@@ -203,7 +219,12 @@ def embrace_files(symbol: str) -> None:
 
 
 def extract_date_from_file(file: str) -> (datetime.date, datetime.date):
-    file_date = file.split('_')[1].split('.')[0]
+    """
+    Get the range of the data.
+    :param file: Name of the file
+    :return: Start and end dates from the file name
+    """
+    file_date = file.split('_')[1].split('&')[0]
     file_start = datetime.strptime(file_date[:10], '%Y-%m-%d').date()
     file_end = datetime.strptime(file_date[11:], '%Y-%m-%d').date()
     return file_start, file_end
@@ -211,6 +232,6 @@ def extract_date_from_file(file: str) -> (datetime.date, datetime.date):
 
 if __name__ == '__main__':
     pass
-    download_historical_data(symbol='NVDA', start='2015-07-08', end='2023-07-11', frequency='1d')
+    download_historical_data(symbol='NVDA', start='2010-07-08', end='2023-07-12', frequency='1mo')
     download_historical_data(symbol='NVDA', start='2015-01-01', end='2023-07-12', frequency='1d')
     embrace_files('NVDA')
