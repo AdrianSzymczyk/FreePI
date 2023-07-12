@@ -32,6 +32,7 @@ def setup_webdriver() -> webdriver:
     # Turn-off userAutomationExtension
     options.add_experimental_option("useAutomationExtension", False)
     chr_driver = webdriver.Chrome(options=options)
+    chr_driver.set_page_load_timeout(5)
     return chr_driver
 
 
@@ -80,7 +81,7 @@ def date_check(symbol: str, input_start_date: datetime, input_end_date: datetime
     return False
 
 
-def get_historical_data(symbol: str, start: str, end: str, frequency: str = '1d') -> None:
+def download_historical_data(symbol: str, start: str, end: str, frequency: str = '1d') -> None:
     """
     Fetch stock market data from the yahoo finance over a given period
     :param symbol: Stock symbol
@@ -88,7 +89,9 @@ def get_historical_data(symbol: str, start: str, end: str, frequency: str = '1d'
     :param end: End of the period of time, valid format: "2021-08-08"
     :param frequency: String defining the frequency of the data, defaults-1d, possible values: [1d, 1wk, 1mo]
     """
-
+    # TODO: Embrace frequency of data:
+    #  - save frequency in the name of the file
+    #  - check the frequency
     # Convert start and end time into datetime format
     start = datetime.strptime(start, '%Y-%m-%d')
     start_to_file = start.date()
@@ -121,10 +124,7 @@ def get_historical_data(symbol: str, start: str, end: str, frequency: str = '1d'
                 driver.execute_script(
                     'window.scrollTo(0, document.getElementById("render-target-default").scrollHeight);')
                 # time.sleep(0.2)
-                last_row = driver.find_element(By.CSS_SELECTOR,
-                                               '#Col1-1-HistoricalDataTable-Proxy > section > div.Pb\(10px\).Ovx\(a\).W\('
-                                               '100\%\) > table > tbody > tr:last-child > td.Py\(10px\).Ta\(start\).Pend\('
-                                               '10px\)')
+                last_row = driver.find_element(By.CSS_SELECTOR, '#Col1-1-HistoricalDataTable-Proxy > section > div.Pb\(10px\).Ovx\(a\).W\(100\%\) > table > tbody > tr:last-child > td.Py\(10px\).Ta\(start\)')
                 last_date = datetime.strptime(last_row.text, "%b %d, %Y").date()
                 if start.date()-timedelta(days=4) < last_date < start.date()+timedelta(days=4):
                     all_data_loaded = True
@@ -145,7 +145,7 @@ def get_historical_data(symbol: str, start: str, end: str, frequency: str = '1d'
         tmp_arr: np.array = np.array(stock_table.text.split('\n'))
         separated_data = [re.split(r'\s+(?!Close\*\*)', line) for line in tmp_arr[:-1]
                           if 'Dividend' not in line if 'Split' not in line]
-        stock_data: List = []
+        stock_data: List[str] = []
         for i in range(1, len(separated_data)):
             date = ' '.join(separated_data[i][:3])
             stock_data.append([date] + separated_data[i][3:])
@@ -178,7 +178,7 @@ def embrace_files(symbol: str) -> None:
         # Loop over the list with files names
         for file in all_files:
             # Create an empty list of files to be deleted
-            delete_list: List = []
+            delete_list: List[str] = []
             file_start, file_end = extract_date_from_file(file)
             for inside_file in all_files:
                 if file == inside_file:
@@ -211,5 +211,6 @@ def extract_date_from_file(file: str) -> (datetime.date, datetime.date):
 
 if __name__ == '__main__':
     pass
-    get_historical_data(symbol='NVDA', start='2015-07-08', end='2023-07-11', frequency='1d')
+    download_historical_data(symbol='NVDA', start='2015-07-08', end='2023-07-11', frequency='1d')
+    download_historical_data(symbol='NVDA', start='2015-01-01', end='2023-07-12', frequency='1d')
     embrace_files('NVDA')
