@@ -1,9 +1,11 @@
 import functools
 import os
+import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import List
 from config import config
+from config.config import logger
 import numpy as np
 import pandas as pd
 import re
@@ -38,8 +40,7 @@ def setup_webdriver() -> webdriver:
     return chr_driver
 
 
-def initial_run(driver: webdriver, cookie_btn_path: str = '//*[@id="consent-page"]/div/div/div/form/div[2]/div['
-                                                          '2]/button[1]', consent: bool = False):
+def initial_driver_run(driver: webdriver, cookie_btn_path: str = '//*[@id="consent-page"]/div/div/div/form/div[2]/div[2]/button[1]', consent: bool = False):
     """
     Accept cookies when scraper first launches.
     :param driver: Webdriver for remote control and browsing the webpage
@@ -59,14 +60,36 @@ def initial_run(driver: webdriver, cookie_btn_path: str = '//*[@id="consent-page
     return consent
 
 
+def extract_date_from_file(file: str) -> (datetime.date, datetime.date):
+    """
+    Get the range of the data.
+    :param file: Name of the file
+    :return: Start and end dates from the file name
+    """
+    # Check whether the data comes from the longest range
+    if len(file.split('_')) > 2:
+        file_date = file.split('_')[2].split('&')[0]
+    else:
+        file_date = file.split('_')[1].split('&')[0]
+    file_start = datetime.strptime(file_date[:10], '%Y-%m-%d').date()
+    file_end = datetime.strptime(file_date[11:], '%Y-%m-%d').date()
+    return file_start, file_end
+
+
 def create_files_list(func):
     @functools.wraps(func)
     def wrapper(symbol, *args, **kwargs):
+        # Upper case symbol
+        symbol = symbol.upper()
         kwargs['symbol'] = symbol
         # Create variable with a path to the symbol directory
         kwargs['dict_path']: Path = Path(config.DATA_DICT, symbol)
+        # Create stock symbol directory if not exists
+        if not Path.exists(kwargs['dict_path']):
+            os.mkdir(kwargs['dict_path'])
         # Create list with all files inside the directory
-        kwargs['all_files'] = [item for item in os.listdir(kwargs['dict_path']) if os.path.isfile(Path(kwargs['dict_path'], item))]
+        kwargs['all_files'] = [item for item in os.listdir(kwargs['dict_path'])
+                               if os.path.isfile(Path(kwargs['dict_path'], item))]
         value = func(*args, **kwargs)
         return value
     return wrapper
@@ -91,6 +114,7 @@ def date_and_freq_check(input_start_date: datetime, input_end_date: datetime, fr
         if file_start <= input_start_date <= file_end:
             if file_start <= input_end_date <= file_end:
                 if file_freq == frequency:
+                    pass
                     return True
     return False
 
@@ -102,14 +126,27 @@ def download_historical_data(symbol: str, start: str, end: str, frequency: str =
     :param symbol: Stock symbol
     :param start: Beginning of the period of time, valid format: "2021-09-08"
     :param end: End of the period of time, valid format: "2021-08-08"
-    :param frequency: String defining the frequency of the data, defaults-1d, possible values: [1d, 1wk, 1mo]
+    :param frequency: String specifying the frequency of the data, defaults-1d, possible values: [1d, 1wk, 1mo]
     :param save_csv: Determine whether to save csv file. Default True
     """
-    # Convert start and end time into datetime format
-    start = datetime.strptime(start, '%Y-%m-%d')
-    start_to_file = start.date()
-    end = datetime.strptime(end, '%Y-%m-%d')
-    end_to_file = end.date()
+    # Upper case symbol
+    symbol = symbol.upper()
+    try:
+        # Convert start and end time into datetime format
+        start = datetime.strptime(start, '%Y-%m-%d')
+        start_to_file = start.date()
+        end = datetime.strptime(end, '%Y-%m-%d')
+        end_to_file = end.date()
+        # Validate passed arguments
+        if start_to_file > end_to_file:
+            logger.info('Start date is greater than end date')
+            return
+        # Change end date to actual date if given date is out of range
+        if end_to_file > datetime.now().date():
+            end_to_file = datetime.now().date()
+    except ValueError as err:
+        logger.error(err)
+        return
 
     if not date_and_freq_check(symbol=symbol, input_start_date=start, input_end_date=end, frequency=frequency):
         # Convert time strings to timestamp format
@@ -122,7 +159,7 @@ def download_historical_data(symbol: str, start: str, end: str, frequency: str =
         driver = setup_webdriver()
         try:
             driver.get(historical_url)
-            initial_run(driver)
+            initial_driver_run(driver)
         except selenium.common.exceptions.TimeoutException:
             print('Timed out receiving message')
             driver.refresh()
@@ -141,12 +178,13 @@ def download_historical_data(symbol: str, start: str, end: str, frequency: str =
             while True:
                 driver.execute_script(
                     'window.scrollTo(0, document.getElementById("render-target-default").scrollHeight);')
-                # time.sleep(0.2)
-                last_row = driver.find_element(By.CSS_SELECTOR, '#Col1-1-HistoricalDataTable-Proxy > section > div.Pb\(10px\).Ovx\(a\).W\(100\%\) > table > tbody > tr:last-child > td.Py\(10px\).Ta\(start\)')
-                last_date = datetime.strptime(last_row.text, "%b %d, %Y").date()
+                time.sleep(0.2)
+                last_row_date = driver.find_element(By.CSS_SELECTOR,
+                                               '#Col1-1-HistoricalDataTable-Proxy > section > div.Pb\(10px\).Ovx\(a\).W\(100\%\) > table > tbody > tr:last-child > td.Py\(10px\).Ta\(start\)')
+                last_date = datetime.strptime(last_row_date.text, "%b %d, %Y").date()
                 # Adjust lower and upper limits of last displayed date
                 if frequency == '1wk':
-                    lower_start_limit = start.date()-timedelta(days=7)
+                    lower_start_limit = start.date() - timedelta(days=7)
                     upper_start_limit = start.date() + timedelta(days=7)
                 elif frequency == '1mo':
                     lower_start_limit = start.date() - timedelta(days=31)
@@ -155,13 +193,21 @@ def download_historical_data(symbol: str, start: str, end: str, frequency: str =
                     lower_start_limit = start.date() - timedelta(days=4)
                     upper_start_limit = start.date() + timedelta(days=4)
                 # Check whether all the data loaded
-                if lower_start_limit < last_date < upper_start_limit:
-                    all_data_loaded = True
-                    break
-                elif str(last_date) == str(tmp_last_date) and driver.find_element(By.CSS_SELECTOR, loading_message):
-                    print('Endless loop', last_date, '=', tmp_last_date)
-                    endless_loop = True
-                    break
+                try:
+                    if lower_start_limit < last_date < upper_start_limit:
+                        all_data_loaded = True
+                        break
+                    elif str(last_date) == str(tmp_last_date) and driver.find_element(By.CSS_SELECTOR, loading_message):
+                        endless_loop = True
+                        break
+                except selenium.common.exceptions.NoSuchElementException:
+                    if str(last_date) == str(tmp_last_date):
+                        print('Reached the end of the data')
+                        all_data_loaded = True
+                        # Change start date into last date from the yahoo finance
+                        start_to_file = last_date
+                        break
+                # Handle variables responsible for refreshing page when driver gets stuck
                 i += 1
                 if i > 10:
                     tmp_last_date = last_date
@@ -197,6 +243,9 @@ def download_historical_data(symbol: str, start: str, end: str, frequency: str =
             return stock_df
     else:
         print('Data in the given date range already exists')
+
+    # Review all files inside symbol directory
+    delete_files_with_less_data_range(symbol)
 
 
 @create_files_list
@@ -235,20 +284,14 @@ def delete_files_with_less_data_range(**kwargs) -> None:
         print(f'Directory for "{kwargs["symbol"]}" was not found')
 
 
-def extract_date_from_file(file: str) -> (datetime.date, datetime.date):
-    """
-    Get the range of the data.
-    :param file: Name of the file
-    :return: Start and end dates from the file name
-    """
-    file_date = file.split('_')[1].split('&')[0]
-    file_start = datetime.strptime(file_date[:10], '%Y-%m-%d').date()
-    file_end = datetime.strptime(file_date[11:], '%Y-%m-%d').date()
-    return file_start, file_end
-
-
 @create_files_list
-def update_historical_data(frequency: str, **kwargs):
+def update_historical_data(frequency: str, **kwargs) -> None:
+    # TODO:
+    #   - adapt function for all frequency at the same time - update all files one by one
+    """
+    Update files with latest stock market data
+    :param frequency: String specifying the frequency of the data, possible values: [1d, 1wk, 1mo]
+    """
     current_day: datetime.date = datetime.now().date()
     oldest_file: datetime.date = current_day
     name_of_longest_range_file: str = ''
@@ -261,16 +304,21 @@ def update_historical_data(frequency: str, **kwargs):
                 name_of_longest_range_file = file
     # Setup new range to download the data
     final_file_start, final_file_end = extract_date_from_file(name_of_longest_range_file)
-    new_data: pd.DataFrame = download_historical_data(kwargs['symbol'], final_file_end.strftime('%Y-%m-%d'),
-                                                      current_day.strftime('%Y-%m-%d'), save_csv=False)
-    # Read older data
-    longest_file = pd.read_csv(Path(config.DATA_DICT, kwargs['symbol'], name_of_longest_range_file), index_col=False)
-    # Concatenate new and old data
-    updated_data = pd.concat([new_data, longest_file])
 
-    # Save file with updated stock information
-    file_name: str = f'{kwargs["symbol"]}_{oldest_file}-{current_day}&freq={frequency}.csv'
-    updated_data.to_csv(Path(config.DATA_DICT, kwargs['symbol'], file_name), index_label=False, index=False)
+    if current_day == final_file_end:
+        print('Nothing to update, file is up to date')
+    else:
+        new_data: pd.DataFrame = download_historical_data(kwargs['symbol'], final_file_end.strftime('%Y-%m-%d'),
+                                                          current_day.strftime('%Y-%m-%d'), save_csv=False)
+        # Read older data
+        longest_file = pd.read_csv(Path(config.DATA_DICT, kwargs['symbol'], name_of_longest_range_file),
+                                   index_col=False)
+        # Concatenate new and old data
+        updated_data = pd.concat([new_data, longest_file])
+
+        # Save file with updated stock information
+        file_name: str = f'{kwargs["symbol"]}_{oldest_file}-{current_day}&freq={frequency}.csv'
+        updated_data.to_csv(Path(config.DATA_DICT, kwargs['symbol'], file_name), index_label=False, index=False)
 
     # Review all files inside symbol directory
     delete_files_with_less_data_range(kwargs['symbol'])
@@ -278,7 +326,11 @@ def update_historical_data(frequency: str, **kwargs):
 
 if __name__ == '__main__':
     pass
-    download_historical_data(symbol='NVDA', start='2000-07-08',
-                             end=datetime.now().date().strftime('%Y-%m-%d'), frequency='1d')
+    # download_historical_data(symbol='NVDA', start='2000-07-08',
+    #                          end=datetime.now().date().strftime('%Y-%m-%d'), frequency='1d')
     # delete_files_with_less_data_range('NVDA')
-    update_historical_data('NVDA', '1d')
+
+    # Tests for out of range dates
+    # download_historical_data(symbol='TSLA', start='2005-12-31', end='2025-07-13')
+    download_historical_data(symbol='NVDa', start='1997-12-31', end='2025-07-13')
+    # update_historical_data('NVDA', '1d')
