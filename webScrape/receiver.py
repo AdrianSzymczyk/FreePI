@@ -1,17 +1,14 @@
-import os
 from datetime import datetime
 import pandas as pd
 from webScrape import app
 from pathlib import Path
-from config import config
-from typing import List
+from webScrape.app import create_files_list
 
 
-def receive_data(symbol: str, start: str, end: str, frequency: str = '1d') -> pd.DataFrame:
+@create_files_list
+def receive_data(start: str, end: str, frequency: str = '1d', **kwargs) -> pd.DataFrame:
     """
     Return data from a date range from a specific stock symbol
-    :param symbol:
-    :param symbol: Stock symbol
     :param start: Beginning of the period of time, valid format: "2021-09-08"
     :param end: End of the period of time, valid format: "2021-08-08"
     :param frequency: String defining the frequency of the data, defaults-1d, possible values: [1d, 1wk, 1mo]
@@ -21,25 +18,25 @@ def receive_data(symbol: str, start: str, end: str, frequency: str = '1d') -> pd
     start_date = datetime.strptime(start, '%Y-%m-%d').date()
     end_date = datetime.strptime(end, '%Y-%m-%d').date()
 
-    # Setup path to the directory
-    dict_path: Path = Path(config.DATA_DICT, symbol)
     while True:
-        # Create a list of all files inside the symbol directory
-        all_fies: List[str] = [item for item in os.listdir(dict_path) if os.path.isfile(Path(dict_path, item))]
-        for file in all_fies:
+        for file in kwargs['all_files']:
+            # Create variables with start and end date of the file
             file_start, file_end = app.extract_date_from_file(file)
-            if start_date >= file_start:
-                if end_date <= file_end:
-                    data = pd.read_csv(Path(dict_path, file), index_col=False)
-                    # Convert date column into datetime.date format
-                    data['Date'] = data['Date'].apply(lambda x: datetime.strptime(x, '%b %d, %Y').date())
-                    # Get data from the file in a date range
-                    final_data = data[(data['Date'] >= start_date) & (data['Date'] <= end_date)]
-                    return final_data
+            # Create variable with file frequency
+            file_freq: str = file.split('=')[1].split('.')[0]
+            if file_freq == frequency:
+                if start_date >= file_start:
+                    if end_date <= file_end:
+                        data = pd.read_csv(Path(kwargs['dict_path'], file), index_col=False)
+                        # Convert date column into datetime.date format
+                        data['Date'] = data['Date'].apply(lambda x: datetime.strptime(x, '%b %d, %Y').date())
+                        # Get data from the file in a date range
+                        final_data = data[(data['Date'] >= start_date) & (data['Date'] <= end_date)]
+                        return final_data
+                    else:
+                        app.download_historical_data(kwargs['symbol'], start, end, frequency)
                 else:
-                    app.download_historical_data(symbol, start, end, frequency)
-            else:
-                app.download_historical_data(symbol, start, end, frequency)
+                    app.download_historical_data(kwargs['symbol'], start, end, frequency)
 
 
 if __name__ == "__main__":

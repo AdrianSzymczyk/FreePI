@@ -1,3 +1,4 @@
+import functools
 import os
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -11,6 +12,7 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.wait import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+import selenium.common.exceptions
 
 
 def setup_webdriver() -> webdriver:
@@ -32,7 +34,7 @@ def setup_webdriver() -> webdriver:
     # Turn-off userAutomationExtension
     options.add_experimental_option("useAutomationExtension", False)
     chr_driver = webdriver.Chrome(options=options)
-    chr_driver.set_page_load_timeout(5)
+    chr_driver.set_page_load_timeout(7)
     return chr_driver
 
 
@@ -57,24 +59,33 @@ def initial_run(driver: webdriver, cookie_btn_path: str = '//*[@id="consent-page
     return consent
 
 
-def date_and_freq_check(symbol: str, input_start_date: datetime, input_end_date: datetime, frequency: str) -> bool:
+def create_files_list(func):
+    @functools.wraps(func)
+    def wrapper(symbol, *args, **kwargs):
+        kwargs['symbol'] = symbol
+        # Create variable with a path to the symbol directory
+        kwargs['dict_path']: Path = Path(config.DATA_DICT, symbol)
+        # Create list with all files inside the directory
+        kwargs['all_files'] = [item for item in os.listdir(kwargs['dict_path']) if os.path.isfile(Path(kwargs['dict_path'], item))]
+        value = func(*args, **kwargs)
+        return value
+    return wrapper
+
+
+@create_files_list
+def date_and_freq_check(input_start_date: datetime, input_end_date: datetime, frequency: str, **kwargs) -> bool:
     """
     Check whether the given date range is covered by existing files.
-    :param symbol: String representing the stock symbol
     :param input_start_date: Beginning of the period of time, valid format: "2021-09-08"
     :param input_end_date: End of the period of time, valid format: "2021-08-08"
     :param frequency: String defining the frequency of the data
     :return: Bool value whether to download new data
     """
-    # Create variable with path to the symbol dictionary
-    dict_path = Path(config.DATA_DICT, symbol)
     # Convert date
     input_start_date = input_start_date.date()
     input_end_date = input_end_date.date()
-    # Create list with all files inside the dictionary
-    all_files = [item for item in os.listdir(dict_path) if os.path.isfile(os.path.join(dict_path, item))]
 
-    for file in all_files:
+    for file in kwargs['all_files']:
         file_start, file_end = extract_date_from_file(file)
         file_freq: str = file.split('=')[1].split('.')[0]
         if file_start <= input_start_date <= file_end:
@@ -84,13 +95,15 @@ def date_and_freq_check(symbol: str, input_start_date: datetime, input_end_date:
     return False
 
 
-def download_historical_data(symbol: str, start: str, end: str, frequency: str = '1d') -> None:
+def download_historical_data(symbol: str, start: str, end: str, frequency: str = '1d', save_csv: bool = True) \
+        -> pd.DataFrame:
     """
     Fetch stock market data from the yahoo finance over a given period.
     :param symbol: Stock symbol
     :param start: Beginning of the period of time, valid format: "2021-09-08"
     :param end: End of the period of time, valid format: "2021-08-08"
     :param frequency: String defining the frequency of the data, defaults-1d, possible values: [1d, 1wk, 1mo]
+    :param save_csv: Determine whether to save csv file. Default True
     """
     # Convert start and end time into datetime format
     start = datetime.strptime(start, '%Y-%m-%d')
@@ -107,12 +120,17 @@ def download_historical_data(symbol: str, start: str, end: str, frequency: str =
 
         # Browse webpage and accept cookies
         driver = setup_webdriver()
-        driver.get(historical_url)
-        initial_run(driver)
+        try:
+            driver.get(historical_url)
+            initial_run(driver)
+        except selenium.common.exceptions.TimeoutException:
+            print('Timed out receiving message')
+            driver.refresh()
 
         all_data_loaded: bool = False
         while not all_data_loaded:
             # Variables to detect not loading website
+            loading_message: str = '#Col1-1-HistoricalDataTable-Proxy > section > div.Pb\(10px\).Ovx\(a\).W\(100\%\) > div'
             tmp_last_date: datetime.date = end.date()
             endless_loop: bool = False
             i: int = 0
@@ -140,13 +158,14 @@ def download_historical_data(symbol: str, start: str, end: str, frequency: str =
                 if lower_start_limit < last_date < upper_start_limit:
                     all_data_loaded = True
                     break
-                elif str(last_date) == str(tmp_last_date):
+                elif str(last_date) == str(tmp_last_date) and driver.find_element(By.CSS_SELECTOR, loading_message):
                     print('Endless loop', last_date, '=', tmp_last_date)
                     endless_loop = True
                     break
                 i += 1
                 if i > 10:
                     tmp_last_date = last_date
+
             if endless_loop:
                 print('Refreshing page!!!')
                 driver.refresh()
@@ -161,40 +180,38 @@ def download_historical_data(symbol: str, start: str, end: str, frequency: str =
             date = ' '.join(separated_data[i][:3])
             stock_data.append([date] + separated_data[i][3:])
         final_list = [separated_data[0]] + stock_data
-        # Join created arrays into Pandas DataFrame
-        df = pd.DataFrame(final_list[1:], columns=final_list[0])
 
+        # Join created arrays into Pandas DataFrame
+        stock_df = pd.DataFrame(final_list[1:], columns=final_list[0])
         # Create sub folder for stock symbol whether it doesn't exist
         os.makedirs(Path(config.DATA_DICT, symbol), exist_ok=True)
-        # Save downloaded data into csv file
-        file_name: str = f'{symbol}_{start_to_file}-{end_to_file}&freq={frequency}.csv'
-        df.to_csv(Path(config.DATA_DICT, symbol, file_name), index_label=False, index=False)
 
         # Quit the webdriver and close the browser
         driver.quit()
+
+        # Save downloaded data into csv file
+        if save_csv:
+            file_name: str = f'{symbol}_{start_to_file}-{end_to_file}&freq={frequency}.csv'
+            stock_df.to_csv(Path(config.DATA_DICT, symbol, file_name), index_label=False, index=False)
+        else:
+            return stock_df
     else:
         print('Data in the given date range already exists')
 
 
-def embrace_files(symbol: str) -> None:
-    """
-    Embrace all the files and decide if delete any files.
-    :param symbol: Stock symbol
-    :return:
-    """
+@create_files_list
+def delete_files_with_less_data_range(**kwargs) -> None:
+    """Review all the files and decide whether to delete any of them."""
     try:
-        # Create path and list of all files inside the symbol dictionary
-        dict_path: Path = Path(config.DATA_DICT, symbol)
-        all_files = [item for item in os.listdir(dict_path) if os.path.isfile(Path(dict_path, item))]
         # Loop over the list with files names
-        for file in all_files:
+        for file in kwargs['all_files']:
             # Create an empty list of files to be deleted
             delete_list: List[str] = []
             # Create a variables with a date range
             file_start, file_end = extract_date_from_file(file)
             # Create a variable with frequency of the data
             frequency: str = file.split('=')[1].split('.')[0]
-            for inside_file in all_files:
+            for inside_file in kwargs['all_files']:
                 if file == inside_file:
                     pass
                 else:
@@ -205,17 +222,17 @@ def embrace_files(symbol: str) -> None:
                     if file_start < inside_file_start and file_end >= inside_file_end and frequency == inside_freq:
                         print(f'1. Removed file: {inside_file}')
                         delete_list.append(inside_file)
-                        os.remove(Path(dict_path, inside_file))
+                        os.remove(Path(kwargs['dict_path'], inside_file))
                     elif file_start <= inside_file_start and file_end > inside_file_end and frequency == inside_freq:
                         print(f'2. Removed file: {inside_file}')
                         delete_list.append(inside_file)
-                        os.remove(Path(dict_path, inside_file))
+                        os.remove(Path(kwargs['dict_path'], inside_file))
             for elem in delete_list:
-                all_files.remove(elem)
+                kwargs['all_files'].remove(elem)
 
     # Raise exception if the directory for the symbol does not exist
     except FileNotFoundError:
-        print(f'Dictionary for "{symbol}" was not found')
+        print(f'Directory for "{kwargs["symbol"]}" was not found')
 
 
 def extract_date_from_file(file: str) -> (datetime.date, datetime.date):
@@ -230,8 +247,38 @@ def extract_date_from_file(file: str) -> (datetime.date, datetime.date):
     return file_start, file_end
 
 
+@create_files_list
+def update_historical_data(frequency: str, **kwargs):
+    current_day: datetime.date = datetime.now().date()
+    oldest_file: datetime.date = current_day
+    name_of_longest_range_file: str = ''
+    for file in kwargs['all_files']:
+        file_freq: str = file.split('=')[1].split('.')[0]
+        file_start, file_end = extract_date_from_file(file)
+        if file_freq == frequency:
+            if file_start < oldest_file:
+                oldest_file = file_start
+                name_of_longest_range_file = file
+    # Setup new range to download the data
+    final_file_start, final_file_end = extract_date_from_file(name_of_longest_range_file)
+    new_data: pd.DataFrame = download_historical_data(kwargs['symbol'], final_file_end.strftime('%Y-%m-%d'),
+                                                      current_day.strftime('%Y-%m-%d'), save_csv=False)
+    # Read older data
+    longest_file = pd.read_csv(Path(config.DATA_DICT, kwargs['symbol'], name_of_longest_range_file), index_col=False)
+    # Concatenate new and old data
+    updated_data = pd.concat([new_data, longest_file])
+
+    # Save file with updated stock information
+    file_name: str = f'{kwargs["symbol"]}_{oldest_file}-{current_day}&freq={frequency}.csv'
+    updated_data.to_csv(Path(config.DATA_DICT, kwargs['symbol'], file_name), index_label=False, index=False)
+
+    # Review all files inside symbol directory
+    delete_files_with_less_data_range(kwargs['symbol'])
+
+
 if __name__ == '__main__':
     pass
-    download_historical_data(symbol='NVDA', start='2010-07-08', end='2023-07-12', frequency='1mo')
-    download_historical_data(symbol='NVDA', start='2015-01-01', end='2023-07-12', frequency='1d')
-    embrace_files('NVDA')
+    download_historical_data(symbol='NVDA', start='2000-07-08',
+                             end=datetime.now().date().strftime('%Y-%m-%d'), frequency='1d')
+    # delete_files_with_less_data_range('NVDA')
+    update_historical_data('NVDA', '1d')
