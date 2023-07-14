@@ -170,6 +170,14 @@ def download_historical_data(symbol: str, start: str, end: str, frequency: str =
             print('Timed out receiving message')
             driver.refresh()
 
+        # Check whether stock symbol exists
+        current_url: str = driver.current_url
+        if current_url != historical_url:
+            os.rmdir(Path(config.DATA_DICT, symbol))
+            logger.error(f'Incorrect symbol stock "{symbol}", no such stock symbol.')
+            driver.quit()
+            return
+
         all_data_loaded: bool = False
         while not all_data_loaded:
             # Variables to detect not loading website
@@ -296,6 +304,23 @@ def delete_files_with_less_data_range(**kwargs) -> None:
         print(f'Directory for "{kwargs["symbol"]}" was not found')
 
 
+def file_latest_data_checker(symbol: str, file_name: str, new_data: pd.DataFrame) -> pd.DataFrame:
+    """
+    Check for repetitions inside the file
+    :param symbol:
+    :param file_name:
+    :param new_data:
+    """
+    data_file = pd.read_csv(Path(config.DATA_DICT, symbol, file_name), index_col=False)
+    data_latest_dates = data_file['Date'][:len(new_data)].values
+    for line in new_data['Date']:
+        for date in data_latest_dates:
+            if line == date:
+                print(line, '=', date)
+                return pd.concat([new_data, data_file[1:]])
+    return pd.concat([new_data, data_file])
+
+
 @create_files_list
 def update_historical_data(frequency: str, **kwargs) -> None:
     """
@@ -337,24 +362,9 @@ def update_historical_data(frequency: str, **kwargs) -> None:
     delete_files_with_less_data_range(kwargs['symbol'])
 
 
-def file_latest_data_checker(symbol: str, file_name: str, new_data: pd.DataFrame) -> pd.DataFrame:
-    """
-    Check for repetitions inside the file
-    :param symbol:
-    :param file_name:
-    :param new_data:
-    """
-    data_file = pd.read_csv(Path(config.DATA_DICT, symbol, file_name), index_col=False)
-    data_latest_dates = data_file['Date'][:len(new_data)].values
-    for line in new_data['Date']:
-        for date in data_latest_dates:
-            if line == date:
-                print(line, '=', date)
-                return pd.concat([new_data, data_file[1:]])
-    return pd.concat([new_data, data_file])
-
-
 if __name__ == '__main__':
     pass
     # download_historical_data(symbol='NVDA', start='2000-07-08',
     #                          end=datetime.now().date().strftime('%Y-%m-%d'), frequency='1d')
+
+    download_historical_data(symbol='QWS', start='2020-07-08', end='2023-07-12', frequency='1d')
