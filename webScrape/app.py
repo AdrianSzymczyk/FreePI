@@ -66,7 +66,7 @@ def extract_date_from_file(file: str) -> (datetime.date, datetime.date):
     :param file: Name of the file
     :return: Start and end dates from the file name
     """
-    # Check whether the data comes from the longest range
+    # Check that the data comes from the longest range
     if len(file.split('_')) > 2:
         file_date = file.split('_')[2].split('&')[0]
     else:
@@ -104,18 +104,21 @@ def date_and_freq_check(input_start_date: datetime, input_end_date: datetime, fr
     :param frequency: String defining the frequency of the data
     :return: Bool value whether to download new data
     """
-    # Convert date
-    input_start_date = input_start_date.date()
-    input_end_date = input_end_date.date()
-
+    # Variable to check if file is with the oldest data
+    oldest: bool = False
     for file in kwargs['all_files']:
-        file_start, file_end = extract_date_from_file(file)
         file_freq: str = file.split('=')[1].split('.')[0]
-        if file_start <= input_start_date <= file_end:
-            if file_start <= input_end_date <= file_end:
-                if file_freq == frequency:
-                    pass
+        if file_freq == frequency:
+            file_start, file_end = extract_date_from_file(file)
+            if file.split('_')[1] == 'oldest':
+                oldest = True
+            elif file_start <= input_start_date <= file_end:
+                if file_start <= input_end_date <= file_end:
                     return True
+        # Check if the file contains the oldest data from the yahoo finance
+        if oldest:
+            print('The oldest data')
+            return True
     return False
 
 
@@ -129,6 +132,9 @@ def download_historical_data(symbol: str, start: str, end: str, frequency: str =
     :param frequency: String specifying the frequency of the data, defaults-1d, possible values: [1d, 1wk, 1mo]
     :param save_csv: Determine whether to save csv file. Default True
     """
+    if frequency not in ['1d', '1wk', '1mo']:
+        logger.info('Wrong frequency given')
+        return
     # Upper case symbol
     symbol = symbol.upper()
     try:
@@ -148,7 +154,7 @@ def download_historical_data(symbol: str, start: str, end: str, frequency: str =
         logger.error(err)
         return
 
-    if not date_and_freq_check(symbol=symbol, input_start_date=start, input_end_date=end, frequency=frequency):
+    if not date_and_freq_check(symbol=symbol, input_start_date=start_to_file, input_end_date=end_to_file, frequency=frequency):
         # Convert time strings to timestamp format
         start_time: int = int(start.replace(tzinfo=timezone.utc).timestamp())
         end_time: int = int(end.replace(tzinfo=timezone.utc).timestamp())
@@ -179,19 +185,24 @@ def download_historical_data(symbol: str, start: str, end: str, frequency: str =
                 driver.execute_script(
                     'window.scrollTo(0, document.getElementById("render-target-default").scrollHeight);')
                 time.sleep(0.2)
-                last_row_date = driver.find_element(By.CSS_SELECTOR,
-                                               '#Col1-1-HistoricalDataTable-Proxy > section > div.Pb\(10px\).Ovx\(a\).W\(100\%\) > table > tbody > tr:last-child > td.Py\(10px\).Ta\(start\)')
-                last_date = datetime.strptime(last_row_date.text, "%b %d, %Y").date()
+                try:
+                    last_row_date = driver.find_element(By.CSS_SELECTOR,
+                                              '#Col1-1-HistoricalDataTable-Proxy > section > div.Pb\(10px\).Ovx\(a\).W\(100\%\) > table > tbody > tr:last-child > td.Py\(10px\).Ta\(start\)')
+                except selenium.common.exceptions.NoSuchElementException:
+                    logger.error('No data on the webpage')
+                    all_data_loaded = True
+                    break
+                last_date: datetime.date = datetime.strptime(last_row_date.text, "%b %d, %Y").date()
                 # Adjust lower and upper limits of last displayed date
                 if frequency == '1wk':
-                    lower_start_limit = start.date() - timedelta(days=7)
-                    upper_start_limit = start.date() + timedelta(days=7)
+                    lower_start_limit: datetime.date = start.date() - timedelta(days=7)
+                    upper_start_limit: datetime.date = start.date() + timedelta(days=7)
                 elif frequency == '1mo':
-                    lower_start_limit = start.date() - timedelta(days=31)
-                    upper_start_limit = start.date() + timedelta(days=31)
+                    lower_start_limit: datetime.date = start.date() - timedelta(days=31)
+                    upper_start_limit: datetime.date = start.date() + timedelta(days=31)
                 else:
-                    lower_start_limit = start.date() - timedelta(days=4)
-                    upper_start_limit = start.date() + timedelta(days=4)
+                    lower_start_limit: datetime.date = start.date() - timedelta(days=4)
+                    upper_start_limit: datetime.date = start.date() + timedelta(days=4)
                 # Check whether all the data loaded
                 try:
                     if lower_start_limit < last_date < upper_start_limit:
@@ -205,7 +216,7 @@ def download_historical_data(symbol: str, start: str, end: str, frequency: str =
                         print('Reached the end of the data')
                         all_data_loaded = True
                         # Change start date into last date from the yahoo finance
-                        start_to_file = last_date
+                        start_to_file = 'oldest_' + str(last_date)
                         break
                 # Handle variables responsible for refreshing page when driver gets stuck
                 i += 1
@@ -267,12 +278,13 @@ def delete_files_with_less_data_range(**kwargs) -> None:
                     # Variables for inside file
                     inside_file_start, inside_file_end = extract_date_from_file(inside_file)
                     inside_freq: str = inside_file.split('=')[1].split('.')[0]
+                    inside_oldest: str = inside_file.split('_')[1]
                     # Remove file from the directory if data already exists
-                    if file_start < inside_file_start and file_end >= inside_file_end and frequency == inside_freq:
+                    if file_start < inside_file_start and file_end >= inside_file_end and frequency == inside_freq and inside_oldest != 'oldest':
                         print(f'1. Removed file: {inside_file}')
                         delete_list.append(inside_file)
                         os.remove(Path(kwargs['dict_path'], inside_file))
-                    elif file_start <= inside_file_start and file_end > inside_file_end and frequency == inside_freq:
+                    elif file_start <= inside_file_start and file_end > inside_file_end and frequency == inside_freq and inside_oldest != 'oldest':
                         print(f'2. Removed file: {inside_file}')
                         delete_list.append(inside_file)
                         os.remove(Path(kwargs['dict_path'], inside_file))
@@ -286,8 +298,6 @@ def delete_files_with_less_data_range(**kwargs) -> None:
 
 @create_files_list
 def update_historical_data(frequency: str, **kwargs) -> None:
-    # TODO:
-    #   - adapt function for all frequency at the same time - update all files one by one
     """
     Update files with latest stock market data
     :param frequency: String specifying the frequency of the data, possible values: [1d, 1wk, 1mo]
@@ -302,19 +312,22 @@ def update_historical_data(frequency: str, **kwargs) -> None:
             if file_start < oldest_file:
                 oldest_file = file_start
                 name_of_longest_range_file = file
-    # Setup new range to download the data
-    final_file_start, final_file_end = extract_date_from_file(name_of_longest_range_file)
+    if name_of_longest_range_file == '':
+        print(f'No data in "{frequency}" frequency')
+        return
+    else:
+        # Setup new range to download the data
+        final_file_start, final_file_end = extract_date_from_file(name_of_longest_range_file)
 
     if current_day == final_file_end:
         print('Nothing to update, file is up to date')
     else:
+        # Create Pandas DataFrame with latest data
         new_data: pd.DataFrame = download_historical_data(kwargs['symbol'], final_file_end.strftime('%Y-%m-%d'),
-                                                          current_day.strftime('%Y-%m-%d'), save_csv=False)
-        # Read older data
-        longest_file = pd.read_csv(Path(config.DATA_DICT, kwargs['symbol'], name_of_longest_range_file),
-                                   index_col=False)
-        # Concatenate new and old data
-        updated_data = pd.concat([new_data, longest_file])
+                                                          current_day.strftime('%Y-%m-%d'),
+                                                          frequency=frequency, save_csv=False)
+        # Concatenate data and check for repetitions
+        updated_data = file_latest_data_checker(symbol=kwargs['symbol'], file_name=name_of_longest_range_file, new_data=new_data)
 
         # Save file with updated stock information
         file_name: str = f'{kwargs["symbol"]}_{oldest_file}-{current_day}&freq={frequency}.csv'
@@ -324,13 +337,24 @@ def update_historical_data(frequency: str, **kwargs) -> None:
     delete_files_with_less_data_range(kwargs['symbol'])
 
 
+def file_latest_data_checker(symbol: str, file_name: str, new_data: pd.DataFrame) -> pd.DataFrame:
+    """
+    Check for repetitions inside the file
+    :param symbol:
+    :param file_name:
+    :param new_data:
+    """
+    data_file = pd.read_csv(Path(config.DATA_DICT, symbol, file_name), index_col=False)
+    data_latest_dates = data_file['Date'][:len(new_data)].values
+    for line in new_data['Date']:
+        for date in data_latest_dates:
+            if line == date:
+                print(line, '=', date)
+                return pd.concat([new_data, data_file[1:]])
+    return pd.concat([new_data, data_file])
+
+
 if __name__ == '__main__':
     pass
     # download_historical_data(symbol='NVDA', start='2000-07-08',
     #                          end=datetime.now().date().strftime('%Y-%m-%d'), frequency='1d')
-    # delete_files_with_less_data_range('NVDA')
-
-    # Tests for out of range dates
-    # download_historical_data(symbol='TSLA', start='2005-12-31', end='2025-07-13')
-    download_historical_data(symbol='NVDa', start='1997-12-31', end='2025-07-13')
-    # update_historical_data('NVDA', '1d')
