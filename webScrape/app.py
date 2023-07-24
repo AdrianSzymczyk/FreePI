@@ -36,11 +36,13 @@ def setup_webdriver() -> webdriver:
     # Turn-off userAutomationExtension
     options.add_experimental_option("useAutomationExtension", False)
     chr_driver = webdriver.Chrome(options=options)
-    chr_driver.set_page_load_timeout(7)
+    chr_driver.set_page_load_timeout(4)
     return chr_driver
 
 
-def initial_driver_run(driver: webdriver, cookie_btn_path: str = '//*[@id="consent-page"]/div/div/div/form/div[2]/div[2]/button[1]', consent: bool = False):
+def initial_driver_run(driver: webdriver,
+                       cookie_btn_path: str = '//*[@id="consent-page"]/div/div/div/form/div[2]/div[2]/button[1]',
+                       consent: bool = False):
     """
     Accept cookies when scraper first launches.
     :param driver: Webdriver for remote control and browsing the webpage
@@ -76,7 +78,7 @@ def extract_date_from_file(file: str) -> (datetime.date, datetime.date):
     return file_start, file_end
 
 
-def create_files_list(func):
+def create_file_list(func):
     @functools.wraps(func)
     def wrapper(symbol, *args, **kwargs):
         # Upper case symbol
@@ -92,10 +94,11 @@ def create_files_list(func):
                                if os.path.isfile(Path(kwargs['dict_path'], item))]
         value = func(*args, **kwargs)
         return value
+
     return wrapper
 
 
-@create_files_list
+@create_file_list
 def date_and_freq_check(input_start_date: datetime, input_end_date: datetime, frequency: str, **kwargs) -> bool:
     """
     Check whether the given date range is covered by existing files.
@@ -122,12 +125,139 @@ def date_and_freq_check(input_start_date: datetime, input_end_date: datetime, fr
     return False
 
 
-def symbol_handling(symbol: str) -> pd.DataFrame:
+def symbol_handling(driver: webdriver, symbol: str, start_date: datetime, end_date: datetime,
+                    frequency: str) -> pd.DataFrame:
     """
     Support method for download_historical_data method and list of symbols
-    :param symbol:
+    :param driver: Webdriver for remote control and browsing the webpage
+    :param symbol: Stock market symbol
+    :param start_date: Beginning of the period of time, valid format: "2021-09-08"
+    :param end_date: End of the period of time, valid format: "2021-09-08"
+    :param frequency: String specifying the frequency of the data, defaults-1d, possible values: [1d, 1wk, 1mo]
+    :return: Pandas DataFrame with fetch data from the webpage
+    """
+    # Upper case symbol
+    symbol = symbol.upper()
+    if not date_and_freq_check(symbol=symbol, input_start_date=start_date.date(), input_end_date=end_date.date(),
+                               frequency=frequency):
+        # Convert time strings to timestamp format
+        start_time: int = int(start_date.replace(tzinfo=timezone.utc).timestamp())
+        end_time: int = int(end_date.replace(tzinfo=timezone.utc).timestamp())
+        historical_url = f'https://finance.yahoo.com/quote/{symbol}/history?period1={start_time}&period2={end_time}' \
+                         f'&interval={frequency}&filter=history&frequency={frequency}&includeAdjustedClose=true'
+        try:
+            driver.get(historical_url)
+            initial_driver_run(driver)
+            # driver.refresh()
+        except selenium.common.exceptions.TimeoutException:
+            print('Timed out receiving message')
+            driver.refresh()
+
+        # Check whether stock symbol exists
+        current_url: str = driver.current_url
+        if f'&frequency={frequency}' not in current_url:
+            os.rmdir(Path(config.DATA_DICT, symbol))
+            logger.error(f'Incorrect symbol stock "{symbol}", no such stock symbol.')
+            return
+
+        # Collect all data from the webpage
+        all_data_loaded: bool = False
+        while not all_data_loaded:
+            # Variables to detect not loading website
+            loading_message: str = '#Col1-1-HistoricalDataTable-Proxy > section > div.Pb\(10px\).Ovx\(a\).W\(100\%\) > div'
+            tmp_last_date: datetime.date = end_date.date()
+            endless_loop: bool = False
+            i: int = 0
+            WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located(
+                    (By.XPATH, '//*[@id="Col1-1-HistoricalDataTable-Proxy"]/section/div[2]/table'))
+            )
+            while True:
+                driver.execute_script(
+                    'window.scrollTo(0, document.getElementById("render-target-default").scrollHeight);')
+                time.sleep(0.2)
+                try:
+                    last_row_date = driver.find_element(By.CSS_SELECTOR,
+                                                        '#Col1-1-HistoricalDataTable-Proxy > section > div.Pb\(10px\).Ovx\(a\).W\(100\%\) > table > tbody > tr:last-child > td.Py\(10px\).Ta\(start\)')
+                except selenium.common.exceptions.NoSuchElementException:
+                    logger.error('No data on the webpage')
+                    all_data_loaded = True
+                    break
+                last_date: datetime.date = datetime.strptime(last_row_date.text, "%b %d, %Y").date()
+                # Adjust lower and upper limits of last displayed date
+                start_date = start_date.date()
+                if frequency == '1wk':
+                    lower_start_limit: datetime.date = start_date - timedelta(days=7)
+                    upper_start_limit: datetime.date = start_date + timedelta(days=7)
+                elif frequency == '1mo':
+                    lower_start_limit: datetime.date = start_date - timedelta(days=31)
+                    upper_start_limit: datetime.date = start_date + timedelta(days=31)
+                else:
+                    lower_start_limit: datetime.date = start_date - timedelta(days=4)
+                    upper_start_limit: datetime.date = start_date + timedelta(days=4)
+                # Check whether all the data loaded
+                try:
+                    if lower_start_limit < last_date < upper_start_limit:
+                        all_data_loaded = True
+                        break
+                    elif str(last_date) == str(tmp_last_date) and driver.find_element(By.CSS_SELECTOR,
+                                                                                      loading_message):
+                        endless_loop = True
+                        break
+                except selenium.common.exceptions.NoSuchElementException:
+                    if str(last_date) == str(tmp_last_date):
+                        print('Reached the end of the data')
+                        all_data_loaded = True
+                        # Change start date into last date from the yahoo finance
+                        start_date = 'oldest_' + str(last_date)
+                        break
+                # Handle variables responsible for refreshing page when driver gets stuck
+                i += 1
+                if i > 10:
+                    tmp_last_date = last_date
+
+            if endless_loop:
+                print('Refreshing page!!!')
+                driver.refresh()
+        stock_table = driver.find_element(By.XPATH,
+                                          '//*[@id="Col1-1-HistoricalDataTable-Proxy"]/section/div[2]/table')
+
+        # Merge downloaded data into arrays and format it
+        tmp_arr: np.array = np.array(stock_table.text.split('\n'))
+        separated_data = [re.split(r'\s+(?!Close\*\*)', line) for line in tmp_arr[:-1]
+                          if 'Dividend' not in line if 'Split' not in line]
+        stock_data: List[str] = []
+        for i in range(1, len(separated_data)):
+            date = ' '.join(separated_data[i][:3])
+            stock_data.append([date] + separated_data[i][3:])
+        final_list = [separated_data[0]] + stock_data
+
+        # Join created arrays into Pandas DataFrame
+        stock_df = pd.DataFrame(final_list[1:], columns=final_list[0])
+        return stock_df, start_date
+    else:
+        print('Data in the given date range already exists')
+
+
+def save_data(data: pd.DataFrame, symbol: str, start_date: Union[datetime.date, str], end_date: datetime.date,
+              frequency: str):
+    """
+    Save data in csv file and create sub folder whether not exists
+    :param data: Pandas DataFrame with data to save
+    :param symbol: Stock symbol
+    :param start_date: Beginning of the period of time
+    :param end_date: End of the period of time
+    :param frequency: String specifying the frequency of the data
     :return:
     """
+    if data is None:
+        print('Invalid data format!')
+    else:
+        # Create sub folder for stock symbol whether it doesn't exist
+        os.makedirs(Path(config.DATA_DICT, symbol), exist_ok=True)
+        # Save downloaded data into csv file
+        file_name: str = f'{symbol}_{start_date}-{end_date}&freq={frequency}.csv'
+        data.to_csv(Path(config.DATA_DICT, symbol, file_name), index_label=False, index=False)
 
 
 def download_historical_data(symbols: Union[str, List[str]], start: str, end: str, frequency: str = '1d',
@@ -160,126 +290,38 @@ def download_historical_data(symbols: Union[str, List[str]], start: str, end: st
     except ValueError as err:
         logger.error(err)
         return
+
+    # Set up the driver and accept cookies
+    driver = setup_webdriver()
     if isinstance(symbols, str):
-        # Upper case symbol
-        symbol = symbols.upper()
-        if not date_and_freq_check(symbol=symbol, input_start_date=start_to_file, input_end_date=end_to_file, frequency=frequency):
-            # Convert time strings to timestamp format
-            start_time: int = int(start.replace(tzinfo=timezone.utc).timestamp())
-            end_time: int = int(end.replace(tzinfo=timezone.utc).timestamp())
-            historical_url = f'https://finance.yahoo.com/quote/{symbol}/history?period1={start_time}&period2={end_time}' \
-                             f'&interval={frequency}&filter=history&frequency={frequency}&includeAdjustedClose=true'
-
-            # Browse webpage and accept cookies
-            driver = setup_webdriver()
-            try:
-                driver.get(historical_url)
-                initial_driver_run(driver)
-            except selenium.common.exceptions.TimeoutException:
-                print('Timed out receiving message')
-                driver.refresh()
-
-            # Check whether stock symbol exists
-            current_url: str = driver.current_url
-            if current_url != historical_url:
-                os.rmdir(Path(config.DATA_DICT, symbol))
-                logger.error(f'Incorrect symbol stock "{symbol}", no such stock symbol.')
-                driver.quit()
-                return
-
-            all_data_loaded: bool = False
-            while not all_data_loaded:
-                # Variables to detect not loading website
-                loading_message: str = '#Col1-1-HistoricalDataTable-Proxy > section > div.Pb\(10px\).Ovx\(a\).W\(100\%\) > div'
-                tmp_last_date: datetime.date = end.date()
-                endless_loop: bool = False
-                i: int = 0
-                WebDriverWait(driver, 10).until(
-                    EC.presence_of_element_located(
-                        (By.XPATH, '//*[@id="Col1-1-HistoricalDataTable-Proxy"]/section/div[2]/table'))
-                )
-                while True:
-                    driver.execute_script(
-                        'window.scrollTo(0, document.getElementById("render-target-default").scrollHeight);')
-                    time.sleep(0.2)
-                    try:
-                        last_row_date = driver.find_element(By.CSS_SELECTOR,
-                                                  '#Col1-1-HistoricalDataTable-Proxy > section > div.Pb\(10px\).Ovx\(a\).W\(100\%\) > table > tbody > tr:last-child > td.Py\(10px\).Ta\(start\)')
-                    except selenium.common.exceptions.NoSuchElementException:
-                        logger.error('No data on the webpage')
-                        all_data_loaded = True
-                        break
-                    last_date: datetime.date = datetime.strptime(last_row_date.text, "%b %d, %Y").date()
-                    # Adjust lower and upper limits of last displayed date
-                    if frequency == '1wk':
-                        lower_start_limit: datetime.date = start.date() - timedelta(days=7)
-                        upper_start_limit: datetime.date = start.date() + timedelta(days=7)
-                    elif frequency == '1mo':
-                        lower_start_limit: datetime.date = start.date() - timedelta(days=31)
-                        upper_start_limit: datetime.date = start.date() + timedelta(days=31)
-                    else:
-                        lower_start_limit: datetime.date = start.date() - timedelta(days=4)
-                        upper_start_limit: datetime.date = start.date() + timedelta(days=4)
-                    # Check whether all the data loaded
-                    try:
-                        if lower_start_limit < last_date < upper_start_limit:
-                            all_data_loaded = True
-                            break
-                        elif str(last_date) == str(tmp_last_date) and driver.find_element(By.CSS_SELECTOR, loading_message):
-                            endless_loop = True
-                            break
-                    except selenium.common.exceptions.NoSuchElementException:
-                        if str(last_date) == str(tmp_last_date):
-                            print('Reached the end of the data')
-                            all_data_loaded = True
-                            # Change start date into last date from the yahoo finance
-                            start_to_file = 'oldest_' + str(last_date)
-                            break
-                    # Handle variables responsible for refreshing page when driver gets stuck
-                    i += 1
-                    if i > 10:
-                        tmp_last_date = last_date
-
-                if endless_loop:
-                    print('Refreshing page!!!')
-                    driver.refresh()
-            stock_table = driver.find_element(By.XPATH, '//*[@id="Col1-1-HistoricalDataTable-Proxy"]/section/div[2]/table')
-
-            # Merge downloaded data into arrays and format it
-            tmp_arr: np.array = np.array(stock_table.text.split('\n'))
-            separated_data = [re.split(r'\s+(?!Close\*\*)', line) for line in tmp_arr[:-1]
-                              if 'Dividend' not in line if 'Split' not in line]
-            stock_data: List[str] = []
-            for i in range(1, len(separated_data)):
-                date = ' '.join(separated_data[i][:3])
-                stock_data.append([date] + separated_data[i][3:])
-            final_list = [separated_data[0]] + stock_data
-
-            # Join created arrays into Pandas DataFrame
-            stock_df = pd.DataFrame(final_list[1:], columns=final_list[0])
-            # Create sub folder for stock symbol whether it doesn't exist
-            os.makedirs(Path(config.DATA_DICT, symbol), exist_ok=True)
-
-            # Quit the webdriver and close the browser
-            driver.quit()
-
-            # Save downloaded data into csv file
-            if save_csv:
-                file_name: str = f'{symbol}_{start_to_file}-{end_to_file}&freq={frequency}.csv'
-                stock_df.to_csv(Path(config.DATA_DICT, symbol, file_name), index_label=False, index=False)
-            else:
-                return stock_df
+        # Create DataFrame with downloaded data from webpage
+        stock_df, start_to_file = symbol_handling(driver, symbols, start, end, frequency)
+        # Save downloaded data into csv file or return bare DataFrame
+        if save_csv:
+            save_data(stock_df, symbols, start_to_file, end_to_file, frequency)
         else:
-            print('Data in the given date range already exists')
+            return stock_df
+        # Review all files inside symbol directory
+        delete_files_with_less_data_range(symbols)
     elif isinstance(symbols, list):
         for symbol in symbols:
-            print(f'\n{symbol}')
+            print(f'{symbol}')
+            try:
+                stock_df, start_to_file = symbol_handling(driver, symbol, start, end, frequency)
+                if save_csv:
+                    save_data(stock_df, symbol, start_to_file, end_to_file, frequency)
+                else:
+                    return stock_df
+            except TypeError:
+                pass
+            # Review all files inside symbol directory
+            delete_files_with_less_data_range(symbol)
 
-    # Review all files inside symbol directory
-    delete_files_with_less_data_range(symbol)
+    # Quit the webdriver and close the browser
+    driver.quit()
 
 
-@create_files_list
+@create_file_list
 def delete_files_with_less_data_range(**kwargs) -> None:
     """Review all the files and decide whether to delete any of them."""
     try:
@@ -300,17 +342,18 @@ def delete_files_with_less_data_range(**kwargs) -> None:
                     inside_freq: str = inside_file.split('=')[1].split('.')[0]
                     inside_oldest: str = inside_file.split('_')[1]
                     # Remove file from the directory if data already exists
-                    if file_start < inside_file_start and file_end >= inside_file_end and frequency == inside_freq and inside_oldest != 'oldest':
+                    if file_start < inside_file_start and file_end >= inside_file_end and frequency == inside_freq \
+                            and inside_oldest != 'oldest':
                         print(f'1. Removed file: {inside_file}')
                         delete_list.append(inside_file)
                         os.remove(Path(kwargs['dict_path'], inside_file))
-                    elif file_start <= inside_file_start and file_end > inside_file_end and frequency == inside_freq and inside_oldest != 'oldest':
+                    elif file_start <= inside_file_start and file_end > inside_file_end and frequency == inside_freq \
+                            and inside_oldest != 'oldest':
                         print(f'2. Removed file: {inside_file}')
                         delete_list.append(inside_file)
                         os.remove(Path(kwargs['dict_path'], inside_file))
             for elem in delete_list:
                 kwargs['all_files'].remove(elem)
-
     # Raise exception if the directory for the symbol does not exist
     except FileNotFoundError:
         print(f'Directory for "{kwargs["symbol"]}" was not found')
@@ -319,9 +362,10 @@ def delete_files_with_less_data_range(**kwargs) -> None:
 def file_latest_data_checker(symbol: str, file_name: str, new_data: pd.DataFrame) -> pd.DataFrame:
     """
     Check for repetitions inside the file
-    :param symbol:
-    :param file_name:
-    :param new_data:
+    :param symbol: Stock market symbol
+    :param file_name: File name to be concatenated
+    :param new_data: New data to be added to the existing file
+    :return:
     """
     data_file = pd.read_csv(Path(config.DATA_DICT, symbol, file_name), index_col=False)
     data_latest_dates = data_file['Date'][:len(new_data)].values
@@ -333,7 +377,7 @@ def file_latest_data_checker(symbol: str, file_name: str, new_data: pd.DataFrame
     return pd.concat([new_data, data_file])
 
 
-@create_files_list
+@create_file_list
 def update_historical_data(frequency: str, **kwargs) -> None:
     """
     Update files with latest stock market data
@@ -364,7 +408,8 @@ def update_historical_data(frequency: str, **kwargs) -> None:
                                                           current_day.strftime('%Y-%m-%d'),
                                                           frequency=frequency, save_csv=False)
         # Concatenate data and check for repetitions
-        updated_data = file_latest_data_checker(symbol=kwargs['symbol'], file_name=name_of_longest_range_file, new_data=new_data)
+        updated_data = file_latest_data_checker(symbol=kwargs['symbol'], file_name=name_of_longest_range_file,
+                                                new_data=new_data)
 
         # Save file with updated stock information
         file_name: str = f'{kwargs["symbol"]}_{oldest_file}-{current_day}&freq={frequency}.csv'
@@ -379,4 +424,10 @@ if __name__ == '__main__':
     # download_historical_data(symbol='NVDA', start='2000-07-08',
     #                          end=datetime.now().date().strftime('%Y-%m-%d'), frequency='1d')
 
-    download_historical_data(symbols='QWS', start='2020-07-08', end='2023-07-12', frequency='1d')
+    # download_historical_data(symbols='QWS', start='2020-07-08', end='2023-07-12', frequency='1d')
+    # download_historical_data(symbols='NKLA', start='2023-07-20', end='2023-07-21')
+
+    # Symbol list tests
+    # download_historical_data(symbols=['NKLA', 'AAPL'], start='2023-07-10', end='2023-07-22')
+    download_historical_data(symbols=['NKLA', 'AAPL', 'AMD', 'MSFT'], start='2023-06-08', end='2023-07-22')
+    # download_historical_data(symbols=['MSFT'], start='2023-07-10', end='2023-07-22')
