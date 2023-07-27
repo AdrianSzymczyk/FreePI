@@ -2,10 +2,10 @@ from datetime import datetime
 import pandas as pd
 from webScrape import app
 from pathlib import Path
-from webScrape.app import create_files_list
+from webScrape.app import create_file_list
 
 
-@create_files_list
+@create_file_list
 def receive_data(start: str, end: str, frequency: str = '1d', **kwargs) -> pd.DataFrame:
     """
     Return data from a date range from a specific stock symbol
