@@ -25,9 +25,9 @@ def setup_webdriver() -> webdriver:
     chrome_options = webdriver.ChromeOptions()
     chrome_options.add_extension(Path(config.EXTENSIONS_DICT, 'u_block_extension.crx'))
     chrome_options.add_experimental_option('detach', True)
-    chrome_options.add_argument(
-        'user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) '
-        'Chrome/114.0.0.0 Safari/537.36')
+    # chrome_options.add_argument(
+    #     'user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) '
+    #     'Chrome/115.0.0.0 Safari/537.36')
     # Adding argument to disable the AutomationControlled flag
     chrome_options.add_argument("--disable-blink-features=AutomationControlled")
 
@@ -37,29 +37,22 @@ def setup_webdriver() -> webdriver:
     # Turn-off userAutomationExtension
     chrome_options.add_experimental_option("useAutomationExtension", False)
     chr_driver = webdriver.Chrome(options=chrome_options)
-    chr_driver.set_page_load_timeout(7)
+    chr_driver.set_page_load_timeout(4)
     return chr_driver
 
 
 def initial_driver_run(driver: webdriver,
-                       cookie_btn_path: str = '//*[@id="consent-page"]/div/div/div/form/div[2]/div[2]/button[1]',
-                       consent: bool = False) -> None:
+                       cookie_btn_path: str = '//*[@id="consent-page"]/div/div/div/form/div[2]/div[2]/button[1]'):
     """
     Accept cookies when scraper first launches.
     :param driver: Webdriver for remote control and browsing the webpage
     :param cookie_btn_path: String defining XPath to consent button, defaults: "//*[@id="consent-page"]/div/div/div/form/div[2]/div[2]/button[1]"
-    :param consent: Determines whether cookies was accepted, defaults: False
     """
-    if not consent:
-        try:
-            WebDriverWait(driver, 10).until(
-                EC.element_to_be_clickable((By.XPATH, cookie_btn_path))
-            )
-            driver.find_element(By.XPATH, cookie_btn_path).click()
-            consent = True
-        except TimeoutError:
-            print('No cookie accept button')
-    return consent
+    try:
+        driver.find_element(By.XPATH, cookie_btn_path).click()
+    except selenium.common.exceptions.NoSuchElementException:
+        # Pass the method when there is no cookie button on the webpage
+        pass
 
 
 def extract_date_from_file(file: str) -> (datetime.date, datetime.date):
@@ -173,8 +166,7 @@ def delete_files_with_less_data_range(**kwargs) -> None:
                     inside_freq: str = inside_file.split('=')[1].split('.')[0]
                     inside_oldest: str = inside_file.split('_')[1]
                     # Remove file from the directory if data already exists
-                    if file_start <= inside_file_start and file_end >= inside_file_end and frequency == inside_freq \
-                            and file_oldest == inside_oldest:
+                    if file_start <= inside_file_start and file_end >= inside_file_end and frequency == inside_freq:
                         print(f'1. Removed file: {inside_file}')
                         delete_list.append(inside_file)
                         os.remove(Path(kwargs['dict_path'], inside_file))
@@ -214,8 +206,6 @@ def symbol_handler(driver: webdriver, symbol: str, start_date: datetime, end_dat
         try:
             driver.get(historical_url)
             initial_driver_run(driver)
-            time.sleep(0.3)
-            # driver.refresh()
         except selenium.common.exceptions.TimeoutException:
             print('Timed out receiving message')
             driver.refresh()
@@ -354,6 +344,7 @@ def download_historical_data(symbols: Union[str, List[str]], start: str, end: st
     elif isinstance(symbols, list):
         all_symbols_df: list = []
         for symbol in symbols:
+            print(f'Download_func - symbol: {symbol}')
             try:
                 stock_df, start_to_file = symbol_handler(driver, symbol, start, end, frequency, update)
                 if save_csv:
@@ -391,7 +382,6 @@ def file_latest_data_checker(symbol: str, file_name: str, new_data: pd.DataFrame
     for date in file_latest_dates:
         for line in new_data['Date']:
             if line == date:
-                print(line, '=', date)
                 # Drop repetitions from the old data
                 file_data.drop(file_data[file_data['Date'] == date].index, inplace=True)
     return pd.concat([new_data, file_data])
@@ -517,8 +507,8 @@ if __name__ == '__main__':
     # download_historical_data(symbols=['NKLA', 'AAPL', 'AMD', 'MSFT'], start='2023-06-08', end='2023-07-15')
     # download_historical_data(symbols=['MSFT'], start='2023-07-10', end='2023-07-22')
 
-    download_historical_data(symbols=['RIVN', 'SOFI', 'NKLA', 'AAPL', 'AMD', 'MSFT'], start='2023-06-08',
-                             end='2023-07-15', save_csv=False)
+    # download_historical_data(symbols=['RIVN', 'SOFI', 'NKLA', 'AAPL', 'AMD', 'MSFT'], start='2023-06-08',
+    #                          end='2023-07-15', save_csv=False)
 
     # download_historical_data(symbols=['RIVN', 'SOFI', 'NKLA', 'AAPL', 'AMD', 'MSFT'], start='2023-06-08',
     #                          end='2023-07-15')
@@ -531,6 +521,8 @@ if __name__ == '__main__':
     # update_historical_data(['NKLA', 'AAPL'], '1d')  # Fix problem with unknown stock symbol ('GOOGL')
 
     # update_historical_data(['NVDA', 'TSLA'], '1d')
+
+    update_historical_data(symbols=['RIVN', 'SOFI', 'NKLA', 'AAPL', 'AMD', 'MSFT'], frequency='1d')
 
     # Tests for stock_symbols file
     # stock_symbols = pd.read_csv(Path(config.DATA_DICT, 'stock_symbols.csv'), header=None, index_col=0)
