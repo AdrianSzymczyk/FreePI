@@ -3,7 +3,7 @@ import os
 import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from typing import List, Union
+from typing import List, Union, Tuple
 from config import config
 from config.config import logger
 import numpy as np
@@ -93,7 +93,7 @@ def create_file_list(func):
 
 @create_file_list
 def date_and_freq_check(input_start_date: datetime, input_end_date: datetime, frequency: str,
-                        update: bool = False, **kwargs) -> bool:
+                        update: bool = False, **kwargs) -> Union[bool, Tuple[bool, datetime.date]]:
     """
     Check whether the given date range is covered by existing files.
     :param input_start_date: Beginning of the period of time, valid format: "2021-09-08"
@@ -112,22 +112,26 @@ def date_and_freq_check(input_start_date: datetime, input_end_date: datetime, fr
                 oldest = True
             elif file_start <= input_start_date <= file_end:
                 if file_start <= input_end_date <= file_end:
-                    return True
+                    return False
+            elif input_start_date < file_start:
+                if input_end_date <= file_end:
+                    file_start = datetime.strptime(datetime.strftime(file_start, '%Y-%m-%d'), '%Y-%m-%d')
+                    return True, file_start
         # Check if the file contains the oldest data from the yahoo finance
         if oldest:
             if update:
-                return False
-            else:
                 return True
-    return False
+            else:
+                return False
+    return True
 
 
-def save_data(data: pd.DataFrame, symbol: str, start_date: Union[datetime.date, str], end_date: datetime.date,
-              frequency: str):
+@create_file_list
+def save_data(data: pd.DataFrame, start_date: Union[datetime.date, str], end_date: datetime.date,
+              frequency: str, **kwargs) -> None:
     """
     Save data in csv file and create sub folder whether not exists
     :param data: Pandas DataFrame with data to save
-    :param symbol: Stock symbol
     :param start_date: Beginning of the period of time
     :param end_date: End of the period of time
     :param frequency: String specifying the frequency of the data
@@ -136,11 +140,27 @@ def save_data(data: pd.DataFrame, symbol: str, start_date: Union[datetime.date, 
     if data is None:
         print('Invalid data format!')
     else:
+        oldest: bool = False
         # Create sub folder for stock symbol whether it doesn't exist
-        os.makedirs(Path(config.DATA_DICT, symbol), exist_ok=True)
+        os.makedirs(Path(config.DATA_DICT, kwargs['symbol']), exist_ok=True)
+        for file in kwargs['all_files']:
+            file_start, file_end = extract_date_from_file(file)
+            # Create a variables with frequency of the data and information if file is oldest
+            file_frequency: str = file.split('=')[1].split('.')[0]
+            if frequency == file_frequency:
+                if isinstance(start_date, str):
+                    oldest: bool = True
+                    start_date = datetime.strptime(start_date.split('_')[1], '%Y-%m-%d').date()
+                # If start_date of downloaded data is smaller than file_start concatenate data
+                if file_start > start_date:
+                    file_data = pd.read_csv(Path(config.DATA_DICT, kwargs['symbol'], file), index_col=False)
+                    data = pd.concat([file_data, data])
+
+        if oldest:
+            start_date = 'oldest_' + str(start_date)
         # Save downloaded data into csv file
-        file_name: str = f'{symbol}_{start_date}-{end_date}&freq={frequency}.csv'
-        data.to_csv(Path(config.DATA_DICT, symbol, file_name), index_label=False, index=False)
+        file_name: str = f'{kwargs["symbol"]}_{start_date}-{end_date}&freq={frequency}.csv'
+        data.to_csv(Path(config.DATA_DICT, kwargs['symbol'], file_name), index_label=False, index=False)
 
 
 @create_file_list
@@ -187,16 +207,24 @@ def symbol_handler(driver: webdriver, symbol: str, start_date: datetime, end_dat
     Support method for download_historical_data method and list of symbols
     :param driver: Webdriver for remote control and browsing the webpage
     :param symbol: Stock market symbol
-    :param start_date: Beginning of the period of time, valid format: "2021-09-08"
-    :param end_date: End of the period of time, valid format: "2021-09-08"
+    :param start_date: Beginning of the period of time
+    :param end_date: End of the period of time
     :param frequency: String specifying the frequency of the data, defaults-1d, possible values: [1d, 1wk, 1mo]
     :param update: Determine whether update method is called
     :return: Pandas DataFrame with fetch data from the webpage
     """
     # Upper case symbol
     symbol = symbol.upper()
-    if not date_and_freq_check(symbol=symbol, input_start_date=start_date.date(), input_end_date=end_date.date(),
-                               frequency=frequency, update=update):
+    try:
+        condition, new_end_time = date_and_freq_check(symbol=symbol, input_start_date=start_date.date(),
+                                                      input_end_date=end_date.date(), frequency=frequency,
+                                                      update=update)
+        # Assign new end_date
+        end_date = new_end_time
+    except TypeError:
+        condition = date_and_freq_check(symbol=symbol, input_start_date=start_date.date(),
+                                        input_end_date=end_date.date(), frequency=frequency, update=update)
+    if condition:
         # Convert time strings to timestamp format and
         start_time: int = int(start_date.replace(tzinfo=timezone.utc).timestamp())
         end_time: int = int(end_date.replace(tzinfo=timezone.utc).timestamp())
@@ -236,7 +264,7 @@ def symbol_handler(driver: webdriver, symbol: str, start_date: datetime, end_dat
             while True:
                 driver.execute_script(
                     'window.scrollTo(0, document.getElementById("render-target-default").scrollHeight);')
-                time.sleep(0.5)
+                time.sleep(0.4)
                 try:
                     last_row_date = driver.find_element(By.CSS_SELECTOR,
                                                         '#Col1-1-HistoricalDataTable-Proxy > section > div.Pb\(10px\).Ovx\(a\).W\(100\%\) > table > tbody > tr:last-child > td.Py\(10px\).Ta\(start\)')
@@ -267,7 +295,6 @@ def symbol_handler(driver: webdriver, symbol: str, start_date: datetime, end_dat
                         all_data_loaded = True
                         break
                     elif str(last_date) == str(tmp_last_date) and driver.find_element(By.CSS_SELECTOR, loading_message):
-                        endless_loop = True
                         break
                 except selenium.common.exceptions.NoSuchElementException:
                     if str(last_date) == str(tmp_last_date):
@@ -276,6 +303,7 @@ def symbol_handler(driver: webdriver, symbol: str, start_date: datetime, end_dat
                         # Change start date into last date from the yahoo finance
                         start_date = 'oldest_' + str(last_date)
                         break
+
                 # Handle variables responsible for refreshing page when driver gets stuck
                 i += 1
                 if i > 10:
@@ -359,7 +387,8 @@ def download_historical_data(symbols: Union[str, List[str], np.ndarray], start: 
             try:
                 stock_df, start_to_file = symbol_handler(driver, symbol, start, end, frequency, update)
                 if save_csv:
-                    save_data(stock_df, symbol, start_to_file, end_to_file, frequency)
+                    save_data(symbol=symbol, data=stock_df, start_date=start_to_file, end_date=end_to_file,
+                              frequency=frequency)
                 else:
                     stock_df['Company'] = symbol
                     all_symbols_df.append(stock_df)
@@ -410,29 +439,32 @@ def find_oldest_file(symbol_dict: Path, frequency: str) -> (datetime.date, str, 
     name_of_longest_range_file: str = ''
 
     # Create list of all files inside symbol directory
-    all_files = [item for item in os.listdir(symbol_dict) if os.path.isfile(Path(symbol_dict, item))]
-    for file in all_files:
-        file_freq: str = file.split('=')[1].split('.')[0]
-        file_start, file_end = extract_date_from_file(file)
-        if file_freq == frequency:
-            if file_start < oldest_file:
-                if file.split('_')[1] == 'oldest':
-                    oldest_file = 'oldest_' + str(file_start)
-                    name_of_longest_range_file = file
-                    break
-                else:
-                    oldest_file = file_start
-                    name_of_longest_range_file = file
-    if name_of_longest_range_file == '':
-        print(f'No data in "{frequency}" frequency')
+    try:
+        all_files = [item for item in os.listdir(symbol_dict) if os.path.isfile(Path(symbol_dict, item))]
+        for file in all_files:
+            file_freq: str = file.split('=')[1].split('.')[0]
+            file_start, file_end = extract_date_from_file(file)
+            if file_freq == frequency:
+                if file_start < oldest_file:
+                    if file.split('_')[1] == 'oldest':
+                        oldest_file = 'oldest_' + str(file_start)
+                        name_of_longest_range_file = file
+                        break
+                    else:
+                        oldest_file = file_start
+                        name_of_longest_range_file = file
+        if name_of_longest_range_file == '':
+            print(f'No data in "{frequency}" frequency')
+            return
+        else:
+            # Setup new range to download the data
+            final_file_start, final_file_end = extract_date_from_file(name_of_longest_range_file)
+        return final_file_end, name_of_longest_range_file, oldest_file
+    except FileNotFoundError:
         return
-    else:
-        # Setup new range to download the data
-        final_file_start, final_file_end = extract_date_from_file(name_of_longest_range_file)
-    return final_file_end, name_of_longest_range_file, oldest_file
 
 
-def update_historical_data(symbols: Union[str, List[str]], frequency: str) -> None:
+def update_historical_data(symbols: Union[str, List[str], np.ndarray], frequency: str) -> None:
     """
     Update files with latest stock market data
     :param symbols: Stock symbol, accepts a single symbol or a list of symbols
@@ -463,7 +495,7 @@ def update_historical_data(symbols: Union[str, List[str]], frequency: str) -> No
 
         # Review all files inside symbol directory
         delete_files_with_less_data_range(symbols)
-    elif isinstance(symbols, list):
+    elif isinstance(symbols, list) or isinstance(symbols, np.ndarray):
         latest_end_date: datetime.date = datetime.now().date()
         list_of_longest_range_file: list[str] = []
         symbols_to_update: list[str] = []
@@ -543,4 +575,5 @@ if __name__ == '__main__':
     # Tests for stock_symbols file
     df = pd.read_csv(Path(config.DATA_DICT, 'stock_symbols.csv'), header=None, index_col=0)
     stock_symbols = df[1].values
-    download_historical_data(symbols=stock_symbols, start='1985-01-01', end='2023-07-01')
+    # download_historical_data(symbols=stock_symbols, start='1980-01-01', end='2023-07-01')
+    update_historical_data(stock_symbols, '1d')
