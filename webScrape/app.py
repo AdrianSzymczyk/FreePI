@@ -1,4 +1,3 @@
-import functools
 import os
 import sqlite3
 import time
@@ -74,26 +73,6 @@ def extract_date_from_file(file: str) -> (datetime.date, datetime.date):
     return file_start, file_end
 
 
-def create_file_list(func):
-    @functools.wraps(func)
-    def wrapper(symbol, *args, **kwargs):
-        # Upper case symbol
-        symbol = symbol.upper()
-        kwargs['symbol'] = symbol
-        # Create variable with a path to the symbol directory
-        kwargs['dict_path']: Path = Path(config.DATA_DICT, symbol)
-        # Create stock symbol directory if not exists
-        if not Path.exists(kwargs['dict_path']):
-            os.mkdir(kwargs['dict_path'])
-        # Create list with all files inside the directory
-        kwargs['all_files'] = [item for item in os.listdir(kwargs['dict_path'])
-                               if os.path.isfile(Path(kwargs['dict_path'], item))]
-        value = func(*args, **kwargs)
-        return value
-
-    return wrapper
-
-
 def get_name_of_symbol_table(symbol: str, frequency: str, connection: sqlite3.connect = None) -> str:
     """
     Get the name of the stock symbol table from the database
@@ -112,7 +91,7 @@ def get_name_of_symbol_table(symbol: str, frequency: str, connection: sqlite3.co
         table_name = all_tables[0][0]
         return table_name
     except IndexError:
-        print(f'No table for {symbol}')
+        pass
 
 
 def date_and_freq_check(symbol: str, input_start_date: datetime, input_end_date: datetime,
@@ -139,12 +118,23 @@ def date_and_freq_check(symbol: str, input_start_date: datetime, input_end_date:
             if not oldest:
                 if input_start_date < table_start:
                     if input_end_date <= table_end:
-                        table_start = datetime.strptime(datetime.strftime(table_start, '%Y-%m-%d'), '%Y-%m-%d')
+                        table_start = datetime.strptime(datetime.strftime(table_start, '%Y-%m-%d'),
+                                                        '%Y-%m-%d')
                         return True, table_start, 'start'
-            elif input_start_date >= table_start:
+                    elif input_end_date > table_end:
+                        return True
+                elif input_start_date >= table_start:
+                    if input_end_date > table_end:
+                        table_end = datetime.strptime(datetime.strftime(table_end, '%Y-%m-%d'),
+                                                      '%Y-%m-%d')
+                        return True, table_end, 'end'
+            else:
                 if input_end_date > table_end:
-                    table_end = datetime.strptime(datetime.strftime(table_end, '%Y-%m-%d'), '%Y-%m-%d')
-                    return True, table_end, 'end'
+                    table_end = datetime.strptime(datetime.strftime(table_end, '%Y-%m-%d'),
+                                                  '%Y-%m-%d')
+                    return True, (table_start, table_end), 'oldest'
+                else:
+                    return False
         else:
             return True
     except IndexError:
@@ -153,8 +143,8 @@ def date_and_freq_check(symbol: str, input_start_date: datetime, input_end_date:
     return False
 
 
-def symbol_handler(driver: webdriver, symbol: str, start_date: datetime,
-                   end_date: datetime, frequency: str) -> pd.DataFrame:
+def symbol_handler(driver: webdriver, symbol: str, start_date: datetime, end_date: datetime,
+                   frequency: str) -> pd.DataFrame:
     """
     Support method for download_historical_data method and list of symbols
     :param driver: Webdriver for remote control and browsing the webpage
@@ -178,11 +168,16 @@ def symbol_handler(driver: webdriver, symbol: str, start_date: datetime,
         if site_to_change == 'start':
             # Assign new end_date
             end_date = new_time
-        else:
+        elif site_to_change == 'end':
             use_previous_start_date = True
             previous_start_date = start_date.date()
             # Assign new start_date
             start_date = new_time
+        else:
+            use_previous_start_date = True
+            previous_start_date = f'oldest_{new_time[0]}'
+            # Assign new start_date
+            start_date = new_time[1]
 
     if condition:
         # Convert time strings to timestamp format and
@@ -202,7 +197,6 @@ def symbol_handler(driver: webdriver, symbol: str, start_date: datetime,
         current_url: str = driver.current_url
         if f'&frequency={frequency}' not in current_url or driver.title == "Requested symbol wasn't found":
             try:
-                os.rmdir(Path(config.DATA_DICT, symbol))
                 logger.error(f'Incorrect symbol stock "{symbol}", no such stock symbol.')
                 return
             except OSError as e:
@@ -411,6 +405,7 @@ def download_historical_data(symbols: Union[str, List[str], np.ndarray], start: 
         # Change end date to actual date if given date is out of range
         if end_to_file > datetime.now().date():
             end_to_file = datetime.now().date()
+            end = datetime.strptime(str(datetime.now().date()), '%Y-%m-%d')
     except ValueError as err:
         logger.error(err)
         return
@@ -430,8 +425,6 @@ def download_historical_data(symbols: Union[str, List[str], np.ndarray], start: 
                 driver.quit()
                 conn.close()
                 return stock_df
-            # # Review all files inside symbol directory
-            # delete_files_with_less_data_range(symbols)
         except TypeError:
             pass
     elif isinstance(symbols, list) or isinstance(symbols, np.ndarray):
@@ -570,16 +563,31 @@ if __name__ == '__main__':
     # download_historical_data(['TSLA', 'NVDA'], start='2022-10-01', end='2023-01-01', frequency='1d')
     # download_historical_data(['TSLA', 'NVDA'], start='2021-12-20', end='2023-01-01', frequency='1d')
     # download_historical_data(['TSLA', 'NVDA'], start='2021-12-20', end='2023-01-07', frequency='1d')
+
+    # Oldest data tests
     # download_historical_data(['TSLA'], start='2009-12-20', end='2023-08-02', frequency='1d')
+    # download_historical_data(['TSLA'], start='2009-12-20', end='2023-08-04', frequency='1d')
+    # download_historical_data(['TSLA'], start='2009-12-20', end='2023-07-04', frequency='1d')
+    # download_historical_data(['TSLA'], start='2012-12-20', end='2023-07-04', frequency='1d')
+    # download_historical_data(['TSLA'], start='2012-12-20', end='2023-08-05', frequency='1d')
+
+    # Test for not existing stock symbol
+    download_historical_data(['XYZ'], start='2020-12-20', end='2023-08-05', frequency='1d')
+    # update_historical_data('XYZ', '1d')
+
+    # download_historical_data(['TSLA'], start='2020-01-01', end='2023-08-01', frequency='1d')
     # download_historical_data(['TSLA'], start='2009-12-20', end='2023-08-02', frequency='1mo')
     # fetch_from_database('TSLA', '1d')
 
     # update_historical_data('TSLA', '1d')
     # update_historical_data('TSLA', '1mo')
-    update_historical_data(['TSLA', 'NVDA'], '1d')
+    # update_historical_data(['TSLA', 'NVDA'], '1d')
     display_database_tables()
 
+    # download_historical_data(['XYZ'], start='2009-12-20', end='2023-08-02', frequency='1d')
+
     # conn = sqlite3.connect(f'{Path(config.DATA_DICT, "stock_database.db")}')
-    # database_table_name = get_name_of_symbol_table('TSLA', '1d', conn)
-    # delete_duplicates(conn, database_table_name)
+    # database_table_name = get_name_of_symbol_table('NVDA', '1d', conn)
+    # # delete_duplicates(conn, database_table_name)
+    # print(database_table_name)
     # conn.close()
