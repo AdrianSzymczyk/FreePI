@@ -1,6 +1,8 @@
+import functools
 import os
 import sqlite3
 import time
+import shutil
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import List, Union, Tuple
@@ -14,6 +16,7 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.wait import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.common.keys import Keys
 import selenium.common.exceptions
 
 
@@ -37,7 +40,7 @@ def setup_webdriver() -> webdriver:
     # Turn-off userAutomationExtension
     chrome_options.add_experimental_option("useAutomationExtension", False)
     chr_driver = webdriver.Chrome(options=chrome_options)
-    chr_driver.set_page_load_timeout(4)
+    chr_driver.set_page_load_timeout(15)
     return chr_driver
 
 
@@ -53,6 +56,17 @@ def initial_driver_run(driver: webdriver,
     except selenium.common.exceptions.NoSuchElementException:
         # Pass the method when there is no cookie button on the webpage
         pass
+
+
+def timer(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        start_time = time.perf_counter()
+        func(*args, **kwargs)
+        end_time = time.perf_counter()
+        run_time = end_time - start_time
+        print(f'Finished {func.__name__!r} in {run_time} sec.')
+    return wrapper
 
 
 def extract_date_from_file(file: str) -> (datetime.date, datetime.date):
@@ -208,22 +222,28 @@ def symbol_handler(driver: webdriver, symbol: str, start_date: datetime, end_dat
             # Variables to detect not loading website
             loading_message: str = '#Col1-1-HistoricalDataTable-Proxy > section > div.Pb\(10px\).Ovx\(a\).W\(100\%\) > div'
             tmp_last_date: datetime.date = end_date.date()
+            last_date = datetime.now().date()
+            # Variables to handle freezing webpage and not scrolling down
             endless_loop: bool = False
-            i: int = 0
+            first_check: int = 0
+            double_check: int = 0
             WebDriverWait(driver, 10).until(
                 EC.presence_of_element_located(
                     (By.XPATH, '//*[@id="Col1-1-HistoricalDataTable-Proxy"]/section/div[2]/table'))
             )
 
             while True:
-                driver.execute_script(
-                    'window.scrollTo(0, document.getElementById("render-target-default").scrollHeight);')
-                time.sleep(0.4)
+                # Scroll down to bottom
+                # driver.execute_script(
+                #     'window.scrollTo(0, document.getElementById("render-target-default").scrollHeight);')
+                driver.find_element(By.TAG_NAME, 'body').send_keys(Keys.PAGE_DOWN)
+                # Wait to load page
+                time.sleep(0.2)
                 try:
                     last_row_date = driver.find_element(By.CSS_SELECTOR,
                                                         '#Col1-1-HistoricalDataTable-Proxy > section > div.Pb\(10px\).Ovx\(a\).W\(100\%\) > table > tbody > tr:last-child > td.Py\(10px\).Ta\(start\)')
+
                 except selenium.common.exceptions.NoSuchElementException:
-                    logger.error('No data on the webpage')
                     all_data_loaded = True
                     break
                 except selenium.common.exceptions.TimeoutException:
@@ -233,6 +253,10 @@ def symbol_handler(driver: webdriver, symbol: str, start_date: datetime, end_dat
                     last_date: datetime.date = datetime.strptime(last_row_date.text, "%b %d, %Y").date()
                 except AttributeError:
                     last_date = datetime.now().date()
+                if first_check > 10:
+                    if str(last_date) != str(tmp_last_date):
+                        double_check = 0
+                        first_check = 0
                 # Adjust lower and upper limits of last displayed date
                 if frequency == '1wk':
                     lower_start_limit: datetime.date = start_date - timedelta(days=7)
@@ -245,24 +269,32 @@ def symbol_handler(driver: webdriver, symbol: str, start_date: datetime, end_dat
                     upper_start_limit: datetime.date = start_date + timedelta(days=4)
                 # Check whether all the data loaded
                 try:
+                    loading_message_element = driver.find_element(By.CSS_SELECTOR, loading_message)
                     if lower_start_limit < last_date < upper_start_limit:
                         all_data_loaded = True
                         break
-                    elif str(last_date) == str(tmp_last_date) and driver.find_element(By.CSS_SELECTOR, loading_message):
-                        break
+                    # Infinity loading page
+                    elif str(last_date) == str(tmp_last_date) and loading_message_element:
+                        if double_check > 15:
+                            endless_loop = True
+                            # Reset not loading variables
+                            double_check = 0
+                            first_check = 0
+                            break
+                        double_check += 1
                 except selenium.common.exceptions.NoSuchElementException:
-                    if str(last_date) == str(tmp_last_date):
-                        print('Reached the end of the data')
-                        all_data_loaded = True
-                        # Change start date into last date from the yahoo finance
-                        start_date = 'oldest_' + str(last_date)
-                        break
+                    print('Reached the end of the data')
+                    all_data_loaded = True
+                    # Change start date into last date from the yahoo finance
+                    start_date = 'oldest_' + str(last_date)
+                    break
+                    # if str(last_date) == str(tmp_last_date):
 
                 # Handle variables responsible for refreshing page when driver gets stuck
-                i += 1
-                if i > 10:
+                first_check += 1
+                if first_check > 10:
                     tmp_last_date = last_date
-
+            # Refresh webpage caused by not loading data
             if endless_loop:
                 print('Refreshing page!!!')
                 driver.refresh()
@@ -273,6 +305,15 @@ def symbol_handler(driver: webdriver, symbol: str, start_date: datetime, end_dat
         tmp_arr: np.array = np.array(stock_table.text.split('\n'))
         separated_data = [re.split(r'\s+(?!Close\*\*)', line) for line in tmp_arr[:-1]
                           if 'Dividend' not in line if 'Split' not in line]
+        # Remove stars from column names
+        new_column_list: List[str] = []
+        for column_name in separated_data[0]:
+            if '*' in column_name:
+                new_column_list.append(column_name.replace('*', ''))
+            else:
+                new_column_list.append(column_name)
+        separated_data[0] = new_column_list
+        # Concatenate date elements into one element
         stock_data: List[str] = []
         for i in range(1, len(separated_data)):
             date: str = ' '.join(separated_data[i][:3])
@@ -298,6 +339,14 @@ def reset_database():
         print('Database does not exist!')
     conn = sqlite3.connect(f'{Path(config.DATA_DICT, "stock_database.db")}')
     conn.close()
+
+
+def backup_database():
+    current_day = datetime.now().date()
+    database_path: Path = Path(config.DATA_DICT, 'stock_database.db')
+    backup_path: Path = Path(config.DATA_DICT, 'backups', f'backup_database_{current_day}.db')
+    if os.path.isfile(database_path):
+        shutil.copy2(database_path, backup_path)
 
 
 def delete_duplicates(connection: sqlite3.connect, table_name: str) -> None:
@@ -329,7 +378,8 @@ def delete_duplicates(connection: sqlite3.connect, table_name: str) -> None:
     connection.commit()
 
 
-def save_into_database(connection: sqlite3.connect, data: pd.DataFrame, symbol: str, start_date: Union[datetime.date, str],
+def save_into_database(connection: sqlite3.connect, data: pd.DataFrame, symbol: str,
+                       start_date: Union[datetime.date, str],
                        end_date: datetime.date, frequency: str) -> None:
     """
     Save data to a database specific table
@@ -487,6 +537,7 @@ def define_update_range(symbol: str, frequency: str) -> datetime.date:
     return datetime.strptime('1980-01-01', '%Y-%m-%d').date()
 
 
+@timer
 def update_historical_data(symbols: Union[str, List[str], np.ndarray], frequency: str) -> None:
     """
     Update files with latest stock market data
@@ -535,6 +586,9 @@ def update_historical_data(symbols: Union[str, List[str], np.ndarray], frequency
             download_historical_data(symbols_to_update, latest_end_date.strftime('%Y-%m-%d'),
                                      current_date.strftime('%Y-%m-%d'), frequency=frequency)
 
+    # Create a database backup
+    backup_database()
+
 
 def fetch_from_database(symbol, frequency) -> None:
     """
@@ -572,7 +626,7 @@ if __name__ == '__main__':
     # download_historical_data(['TSLA'], start='2012-12-20', end='2023-08-05', frequency='1d')
 
     # Test for not existing stock symbol
-    download_historical_data(['XYZ'], start='2020-12-20', end='2023-08-05', frequency='1d')
+    # download_historical_data(['XYZ'], start='2020-12-20', end='2023-08-05', frequency='1d')
     # update_historical_data('XYZ', '1d')
 
     # download_historical_data(['TSLA'], start='2020-01-01', end='2023-08-01', frequency='1d')
@@ -582,7 +636,9 @@ if __name__ == '__main__':
     # update_historical_data('TSLA', '1d')
     # update_historical_data('TSLA', '1mo')
     # update_historical_data(['TSLA', 'NVDA'], '1d')
-    display_database_tables()
+
+    # update_historical_data('AAPL', '1d')
+    # display_database_tables()
 
     # download_historical_data(['XYZ'], start='2009-12-20', end='2023-08-02', frequency='1d')
 
@@ -591,3 +647,13 @@ if __name__ == '__main__':
     # # delete_duplicates(conn, database_table_name)
     # print(database_table_name)
     # conn.close()
+
+    # Tests for stock_symbols file
+    # reset_database()
+    # df = pd.read_csv(Path(config.DATA_DICT, 'stock_symbols.csv'), header=None, index_col=0)
+    # stock_symbols = df[1].values
+    # download_historical_data(symbols=stock_symbols, start='1980-01-01', end='2023-08-03')
+    # update_historical_data(stock_symbols, '1d')
+    # display_database_tables()
+
+    # download_historical_data('RIOT', start='1980-01-01', end='2023-08-03')

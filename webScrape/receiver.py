@@ -20,7 +20,7 @@ def receiver(connection, symbol_table_name, start_date, end_date):
     result: List[Tuple[str, str, str, str, str, str, str]] = cursor.fetchall()
 
     # Create and save data inside the Pandas DataFrame
-    columns: List[str] = ['Date', 'Open', 'High', 'Low', 'Close*', 'Adj Close**', 'Volume']
+    columns: List[str] = ['Date', 'Open', 'High', 'Low', 'Close', 'Adj Close', 'Volume']
     df_symbol: pd.DataFrame = pd.DataFrame(result, columns=columns)
 
     # Close connection with database
@@ -59,5 +59,5 @@ def receive_data(symbol: str, start: str, end: str, frequency: str = '1d') -> pd
 if __name__ == "__main__":
     # print(receive_data('NVDA', '2020-01-01', '2023-07-08'))
     print(receive_data('TSLA', '2009-01-01', '2023-07-12'))
-    print(receive_data('AAPL', '2021-01-01', '2023-07-12'))
-    app.display_database_tables()
+    # print(receive_data('AAPL', '2021-01-01', '2023-07-12'))
+    # app.display_database_tables()
