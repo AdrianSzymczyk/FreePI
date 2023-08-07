@@ -236,13 +236,15 @@ def symbol_handler(driver: webdriver, symbol: str, start_date: datetime, end_dat
                 # Scroll down to bottom
                 # driver.execute_script(
                 #     'window.scrollTo(0, document.getElementById("render-target-default").scrollHeight);')
-                driver.find_element(By.TAG_NAME, 'body').send_keys(Keys.PAGE_DOWN)
+                try:
+                    driver.find_element(By.TAG_NAME, 'body').send_keys(Keys.PAGE_DOWN)
+                except selenium.common.exceptions.StaleElementReferenceException:
+                    driver.refresh()
                 # Wait to load page
                 time.sleep(0.2)
                 try:
                     last_row_date = driver.find_element(By.CSS_SELECTOR,
                                                         '#Col1-1-HistoricalDataTable-Proxy > section > div.Pb\(10px\).Ovx\(a\).W\(100\%\) > table > tbody > tr:last-child > td.Py\(10px\).Ta\(start\)')
-
                 except selenium.common.exceptions.NoSuchElementException:
                     all_data_loaded = True
                     break
@@ -253,6 +255,7 @@ def symbol_handler(driver: webdriver, symbol: str, start_date: datetime, end_dat
                     last_date: datetime.date = datetime.strptime(last_row_date.text, "%b %d, %Y").date()
                 except AttributeError:
                     last_date = datetime.now().date()
+                # Reset freezing page variables
                 if first_check > 10:
                     if str(last_date) != str(tmp_last_date):
                         double_check = 0
@@ -275,12 +278,13 @@ def symbol_handler(driver: webdriver, symbol: str, start_date: datetime, end_dat
                         break
                     # Infinity loading page
                     elif str(last_date) == str(tmp_last_date) and loading_message_element:
-                        if double_check > 15:
+                        if double_check > 25:
                             endless_loop = True
                             # Reset not loading variables
                             double_check = 0
                             first_check = 0
                             break
+                        time.sleep(0.2)
                         double_check += 1
                 except selenium.common.exceptions.NoSuchElementException:
                     print('Reached the end of the data')
@@ -323,6 +327,24 @@ def symbol_handler(driver: webdriver, symbol: str, start_date: datetime, end_dat
 
         # Join created arrays into Pandas DataFrame
         stock_df = pd.DataFrame(final_list[1:], columns=final_list[0])
+
+        # Convert numeric columns to appropriate data type
+        numeric_columns: List[str] = ['Open', 'High', 'Low', 'Close', 'Adj Close']
+        # Remove '-' values with 0
+        try:
+            stock_df[numeric_columns] = stock_df[numeric_columns].astype(float)
+        except ValueError:
+            stock_df[stock_df == '-'] = 0
+            stock_df[numeric_columns] = stock_df[numeric_columns].str.replace(',', '')
+            stock_df[numeric_columns] = stock_df[numeric_columns].astype(float)
+
+        # Remove commas from "Volume" column and convert to integer
+        try:
+            stock_df['Volume'] = stock_df['Volume'].str.replace(',', '').astype(np.int64)
+        except ValueError:
+            stock_df[stock_data['Volume'] == '-'] = 0
+            stock_df['Volume'] = stock_df['Volume'].str.replace(',', '').astype(np.int64)
+
         if use_previous_start_date:
             return stock_df, previous_start_date
         else:
@@ -334,6 +356,7 @@ def symbol_handler(driver: webdriver, symbol: str, start_date: datetime, end_dat
 def reset_database():
     """Reset database by deleting it and creating new one"""
     try:
+        backup_database()
         os.remove(Path(config.DATA_DICT, 'stock_database.db'))
     except FileNotFoundError:
         print('Database does not exist!')
@@ -650,10 +673,12 @@ if __name__ == '__main__':
 
     # Tests for stock_symbols file
     # reset_database()
-    # df = pd.read_csv(Path(config.DATA_DICT, 'stock_symbols.csv'), header=None, index_col=0)
-    # stock_symbols = df[1].values
-    # download_historical_data(symbols=stock_symbols, start='1980-01-01', end='2023-08-03')
+    df = pd.read_csv(Path(config.DATA_DICT, 'stock_symbols.csv'), header=None, index_col=0)
+    stock_symbols = df[1].values
+    download_historical_data(symbols=stock_symbols, start='1980-01-01', end='2023-08-04')
     # update_historical_data(stock_symbols, '1d')
-    # display_database_tables()
+    display_database_tables()
 
     # download_historical_data('RIOT', start='1980-01-01', end='2023-08-03')
+
+    # download_historical_data('AFRM', '1980-01-01', '2023-08-03')

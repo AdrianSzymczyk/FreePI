@@ -22,6 +22,14 @@ def receiver(connection, symbol_table_name, start_date, end_date):
     # Create and save data inside the Pandas DataFrame
     columns: List[str] = ['Date', 'Open', 'High', 'Low', 'Close', 'Adj Close', 'Volume']
     df_symbol: pd.DataFrame = pd.DataFrame(result, columns=columns)
+    df_symbol.set_index('Date', inplace=True)
+
+    # Convert numeric columns to appropriate data type
+    numeric_columns: List[str] = ['Open', 'High', 'Low', 'Close', 'Adj Close']
+    df_symbol[numeric_columns] = df_symbol[numeric_columns].astype(float)
+
+    # Remove commas from "Volume" column and convert to integer
+    df_symbol['Volume'] = df_symbol['Volume'].str.replace(',', '').astype(int)
 
     # Close connection with database
     connection.close()
