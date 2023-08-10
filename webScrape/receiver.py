@@ -24,12 +24,15 @@ def receiver(connection, symbol_table_name, start_date, end_date):
     df_symbol: pd.DataFrame = pd.DataFrame(result, columns=columns)
     df_symbol.set_index('Date', inplace=True)
 
-    # Convert numeric columns to appropriate data type
-    numeric_columns: List[str] = ['Open', 'High', 'Low', 'Close', 'Adj Close']
-    df_symbol[numeric_columns] = df_symbol[numeric_columns].astype(float)
+    try:
+        # Convert numeric columns to appropriate data type
+        numeric_columns: List[str] = ['Open', 'High', 'Low', 'Close', 'Adj Close']
+        df_symbol[numeric_columns] = df_symbol[numeric_columns].astype(float)
 
-    # Remove commas from "Volume" column and convert to integer
-    df_symbol['Volume'] = df_symbol['Volume'].str.replace(',', '').astype(int)
+        # Remove commas from "Volume" column and convert to integer
+        df_symbol['Volume'] = df_symbol['Volume'].str.replace(',', '').astype(int)
+    except AttributeError:
+        pass
 
     # Close connection with database
     connection.close()
@@ -58,14 +61,17 @@ def receive_data(symbol: str, start: str, end: str, frequency: str = '1d') -> pd
         return receiver(conn, symbol_table_name, start_date, end_date)
     else:
         app.download_historical_data(symbol, start, end, frequency)
-        # Change the name of the symbol table
+        # Get the name of the symbol table
         symbol_table_name = app.get_name_of_symbol_table(symbol, frequency, conn)
         if symbol_table_name is not None:
             return receiver(conn, symbol_table_name, start_date, end_date)
+    return f'Given symbol {symbol} does not exist'
 
 
 if __name__ == "__main__":
     # print(receive_data('NVDA', '2020-01-01', '2023-07-08'))
-    print(receive_data('TSLA', '2009-01-01', '2023-07-12'))
+    # print(receive_data('TSLA', '2009-01-01', '2023-07-12'))
     # print(receive_data('AAPL', '2021-01-01', '2023-07-12'))
+    # print(receive_data('XZAA', '2021-01-01', '2023-07-12'))
+    print(receive_data('TSLA', '2021-01-01', '2023-09-12'))
     # app.display_database_tables()

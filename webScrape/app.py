@@ -222,7 +222,6 @@ def symbol_handler(driver: webdriver, symbol: str, start_date: datetime, end_dat
             # Variables to detect not loading website
             loading_message: str = '#Col1-1-HistoricalDataTable-Proxy > section > div.Pb\(10px\).Ovx\(a\).W\(100\%\) > div'
             tmp_last_date: datetime.date = end_date.date()
-            last_date = datetime.now().date()
             # Variables to handle freezing webpage and not scrolling down
             endless_loop: bool = False
             first_check: int = 0
@@ -282,8 +281,8 @@ def symbol_handler(driver: webdriver, symbol: str, start_date: datetime, end_dat
                         if double_check > 10:
                             endless_loop = True
                             # Reset not loading variables
-                            double_check = 0
                             first_check = 0
+                            double_check = 0
                             break
                         double_check += 1
                 except selenium.common.exceptions.NoSuchElementException:
@@ -301,8 +300,6 @@ def symbol_handler(driver: webdriver, symbol: str, start_date: datetime, end_dat
             # Refresh webpage caused by not loading data
             if endless_loop:
                 print('Refreshing page!!!')
-                double_check = 0
-                first_check = 0
                 driver.refresh()
         stock_table = driver.find_element(By.XPATH,
                                           '//*[@id="Col1-1-HistoricalDataTable-Proxy"]/section/div[2]/table')
