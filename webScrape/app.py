@@ -11,6 +11,7 @@ from config.config import logger
 import numpy as np
 import pandas as pd
 import re
+from backend import technical_indicators
 
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -87,7 +88,7 @@ def extract_date_from_file(file: str) -> (datetime.date, datetime.date):
     return file_start, file_end
 
 
-def get_name_of_symbol_table(symbol: str, frequency: str, connection: sqlite3.connect = None) -> str:
+def get_name_of_symbol_table(symbol: str, frequency: str, connection: sqlite3.Connection = None) -> str:
     """
     Get the name of the stock symbol table from the database
     :param symbol: Stock market symbol
@@ -372,7 +373,7 @@ def backup_database():
         shutil.copy2(database_path, backup_path)
 
 
-def delete_duplicates(connection: sqlite3.connect, table_name: str) -> None:
+def delete_duplicates(connection: sqlite3.Connection, table_name: str) -> None:
     """
     Delete duplicates from the specified database table
     :param connection: Connection to the SQLite database
@@ -401,7 +402,7 @@ def delete_duplicates(connection: sqlite3.connect, table_name: str) -> None:
     connection.commit()
 
 
-def save_into_database(connection: sqlite3.connect, data: pd.DataFrame, symbol: str,
+def save_into_database(connection: sqlite3.Connection, data: pd.DataFrame, symbol: str,
                        start_date: Union[datetime.date, str],
                        end_date: datetime.date, frequency: str) -> None:
     """
@@ -580,6 +581,8 @@ def update_historical_data(symbols: Union[str, List[str], np.ndarray], frequency
             # Download data from the new date range and save into symbol table
             download_historical_data(symbols, final_table_end.strftime('%Y-%m-%d'), current_date.strftime('%Y-%m-%d'),
                                      frequency=frequency)
+            # Update technical indicators
+            technical_indicators.update_indicators(symbols)
 
     elif isinstance(symbols, list) or isinstance(symbols, np.ndarray):
         # Variable to determine the start date for update
@@ -608,6 +611,8 @@ def update_historical_data(symbols: Union[str, List[str], np.ndarray], frequency
             # Download data from the new date range and save into symbol table
             download_historical_data(symbols_to_update, latest_end_date.strftime('%Y-%m-%d'),
                                      current_date.strftime('%Y-%m-%d'), frequency=frequency)
+            # Update technical indicators
+            technical_indicators.update_indicators(symbols_to_update)
 
     # Create a database backup
     backup_database()
@@ -625,9 +630,10 @@ def fetch_from_database(symbol, frequency) -> None:
         sort_query = f'SELECT * FROM `{table_name}` ORDER BY Date DESC'
         cursor = conn.execute(sort_query)
         results = cursor.fetchall()
+        # Fetch all the table columns
         column_exists = conn.execute(f'PRAGMA table_info(`{table_name}`);')
-        column_names = [col[1] for col in column_exists]
-        print('\n', pd.DataFrame(results, columns=column_names))
+        table_columns = [col[1] for col in column_exists]
+        print('\n', pd.DataFrame(results, columns=table_columns))
     except IndexError:
         print(f'No data for {symbol}')
     conn.close()

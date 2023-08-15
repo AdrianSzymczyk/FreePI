@@ -1,33 +1,22 @@
 import sqlite3
 from pathlib import Path
+import numpy as np
 from config import config
 import pandas as pd
 from typing import Union, Tuple, List
 from webScrape import app, receiver
 
 
-def append_to_table(symbol: str, data: pd.DataFrame, column_name: Union[str, List[str]]) -> None:
+def append_to_table(symbol: str, data: pd.DataFrame) -> None:
     """
     Append new columns into stock symbol table
     :param symbol: Stock market symbol
     :param data: Pandas DataFrame with the data to be saved in table
-    :param column_name: Name of the new column
     """
     conn = sqlite3.connect(Path(config.DATA_DICT, 'stock_database.db'))
     table_name = app.get_name_of_symbol_table(symbol=symbol, frequency='1d', connection=conn)
     if table_name is not None:
-        # Fetch all the table columns
-        column_exists = conn.execute(f'PRAGMA table_info(`{table_name}`);')
-        table_columns = [col[1] for col in column_exists]
-        if isinstance(column_name, str):
-            if column_name not in table_columns:
-                data.to_sql(table_name, conn, if_exists='replace', index=False)
-        else:
-            for name in column_name:
-                if name not in table_columns:
-                    data.to_sql(table_name, conn, if_exists='replace', index=False)
-                    break
-        app.fetch_from_database(symbol, '1d')
+        data.to_sql(table_name, conn, if_exists='replace', index=False)
     else:
         pass
     conn.close()
@@ -60,8 +49,8 @@ def calculate_RSI(symbol: str, window: int = 14, adjust: bool = False, append: b
 
     RSI = RSI[::-1]
     if append:
-        data.loc[:, 'RSI'] = round(RSI, 4)
-        append_to_table(symbol, data[::-1], 'RSI')
+        data.loc[:, 'RSI'] = round(RSI, 2)
+        append_to_table(symbol, data[::-1])
         # Set Date as index in the DataFrame
         data.set_index('Date', inplace=True)
         return data[::-1]
@@ -93,10 +82,10 @@ def calculate_MACD(symbol: str, fast_period: int = 12, slow_period: int = 26, si
     histogram = macd_line - signal_line
     # Append data to the symbol table in the database
     if append:
-        data['MACD_Line'] = round(macd_line, 4)
-        data['Signal_Line'] = round(signal_line, 4)
-        data['Histogram'] = round(histogram, 4)
-        append_to_table(symbol, data, ['MACD_Line', 'Signal_Line', 'Histogram'])
+        data['MACD_Line'] = round(macd_line, 2)
+        data['MACD_Signal'] = round(signal_line, 2)
+        data['MACD_Hist'] = round(histogram, 2)
+        append_to_table(symbol, data)
         # Set Date as index in the DataFrame
         data.set_index('Date', inplace=True)
         return data
@@ -104,7 +93,7 @@ def calculate_MACD(symbol: str, fast_period: int = 12, slow_period: int = 26, si
         return macd_line, signal_line, histogram
 
 
-def calculate_EMA(symbol: str, period: int = 14, append: bool = True) -> Union[pd.Series, pd.DataFrame]:
+def calculate_EMA(symbol: str, period: int = 14, append: bool = True) -> pd.Series:
     """
     Calculate moving average (EMA) values for given data
     :param symbol: Stock market symbol
@@ -116,8 +105,8 @@ def calculate_EMA(symbol: str, period: int = 14, append: bool = True) -> Union[p
     data = receiver.receive_data(symbol)
     ema = data['Close'].ewm(span=period, adjust=False).mean()
     if append:
-        data[f'EMA_{period}'] = round(ema, 4)
-        append_to_table(symbol, data[::-1], f'EMA_{period}')
+        data[f'EMA_{period}'] = round(ema, 2)
+        append_to_table(symbol, data)
         # Set Date as index in the DataFrame
         data.set_index('Date', inplace=True)
         return data
@@ -125,5 +114,97 @@ def calculate_EMA(symbol: str, period: int = 14, append: bool = True) -> Union[p
         return ema
 
 
-# result = calculate_RSI('NVDA')
-result = calculate_MACD('TSLA')
+def get_indicator(symbol: str, indicator: str) -> pd.DataFrame:
+    """
+    Get the specific indicator for stock symbol.
+    :param symbol: Stock market symbol
+    :param indicator: Name of the technical indicator
+    :return: Pandas DataFrame with indicator data
+    """
+    # Available indicators
+    available_indicators: List[str] = ['MACD', 'RSI', 'EMA']
+    # Connect to the database
+    conn = sqlite3.connect(Path(config.DATA_DICT, 'stock_database.db'))
+    # Get the name of the symbol table
+    table_name = app.get_name_of_symbol_table(symbol=symbol, frequency='1d', connection=conn)
+    # Close the connection with the database
+    conn.close()
+    if table_name is not None:
+        data = receiver.receive_data(symbol, change_index=True)
+        return_column: List[str] = [col for col in data.columns if indicator in col]
+        if len(return_column) != 0:
+            return data[return_column]
+        else:
+            if indicator in available_indicators:
+                if indicator == 'MACD':
+                    data = calculate_MACD(symbol)
+                elif indicator == 'RSI':
+                    data = calculate_RSI(symbol)
+                elif indicator == 'EMA':
+                    data = calculate_EMA(symbol)
+                return_column: List[str] = [col for col in data.columns if indicator in col]
+                return data[return_column]
+            else:
+                print(f'Given indicator [{indicator}] is not handled for {symbol}!')
+
+
+# TODO:
+#  calculate indicator when API request but symbol doesn't have it
+
+
+def update_single_symbol(connection: sqlite3.Connection, symbol: str) -> None:
+    """
+    Update the technical indicators for a single stock symbol
+    :param connection: Connection to the SQLite database
+    :param symbol: Stock market symbol
+    """
+    # Get the name of symbol table
+    table_name = app.get_name_of_symbol_table(symbol, frequency='1d', connection=connection)
+    if table_name is not None:
+        # Fetch all the table columns
+        column_exists = connection.execute(f'PRAGMA table_info(`{table_name}`);')
+        table_columns = [col[1] for col in column_exists]
+        # Create a list with all the EMA periods
+        ema_periods = [ema for ema in table_columns if 'EMA' in ema]
+        # Execute all the indicator methods
+        calculate_RSI(symbol)
+        calculate_MACD(symbol)
+        if len(ema_periods) != 0:
+            for ema in ema_periods:
+                calculate_EMA(symbol, int(ema.split('_')[1]))
+        else:
+            calculate_EMA(symbol)
+
+
+def update_indicators(symbols: Union[str, List[str], np.ndarray]) -> None:
+    """
+    Update the technical indicators for given symbols
+    :param symbols: Stock market symbols
+    """
+    # Create connection with the database
+    conn = sqlite3.connect(Path(config.DATA_DICT, 'stock_database.db'))
+    # Update indicators for the single symbol
+    if isinstance(symbols, str):
+        update_single_symbol(conn, symbols)
+    # Update indicators for the list of symbols
+    elif isinstance(symbols, list):
+        for symbol in symbols:
+            update_single_symbol(conn, symbol)
+    # Close the database connection
+    conn.close()
+
+
+if __name__ == '__main__':
+    pass
+    # calculate_RSI('NVDA')
+    # calculate_MACD('NVDA')
+    # print(get_indicator('NVDA', 'MACD'))
+    # print(get_indicator('NVDA', 'RSI'))
+    # calculate_EMA('NVDA')
+    # get_indicator('NVDA', 'EMA_14')
+
+    # calculate_RSI('TSLA')
+    # calculate_MACD('TSLA')
+    # update_indicators(['NVDA', 'TSLA'])
+
+    get_indicator('AAPL', 'MACD')

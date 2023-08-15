@@ -106,16 +106,15 @@ async def _read_data(request: Request, symbol: str, function: str) -> Dict:
     return response
 
 
-@app.get('/indicators', tags=['MACD', 'RSI'])
+@app.get('/indicators', tags=['MACD', 'RSI', 'EMA'])
 @create_response
 async def _indicators(request: Request, symbol: str, function: str) -> Dict:
-    # stock_data = receiver.receive_data(symbol=symbol, frequency='1d')
     if function == 'MACD':
-        enhanced_data = technical_indicators.calculate_MACD(symbol)
+        enhanced_data = technical_indicators.get_indicator(symbol, 'MACD')
     elif function == 'RSI':
-        enhanced_data = technical_indicators.calculate_RSI(symbol)
+        enhanced_data = technical_indicators.get_indicator(symbol, 'RSI')
     elif function == 'EMA':
-        enhanced_data = technical_indicators.calculate_EMA(symbol)
+        enhanced_data = technical_indicators.get_indicator(symbol, 'EMA')
     else:
         raise HTTPException(status_code=400, detail='Invalid function parameter')
     res = enhanced_data.to_json(orient='index')

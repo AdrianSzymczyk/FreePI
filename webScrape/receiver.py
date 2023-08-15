@@ -7,7 +7,7 @@ from pathlib import Path
 from config import config
 
 
-def receiver(connection: sqlite3.connect, symbol_table_name: str, start_date: datetime.date, end_date: datetime.date,
+def receiver(connection: sqlite3.Connection, symbol_table_name: str, start_date: datetime.date, end_date: datetime.date,
              change_index: bool = False) -> pd.DataFrame:
     """
     Return stock data from the database symbol table
