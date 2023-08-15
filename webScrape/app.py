@@ -625,8 +625,9 @@ def fetch_from_database(symbol, frequency) -> None:
         sort_query = f'SELECT * FROM `{table_name}` ORDER BY Date DESC'
         cursor = conn.execute(sort_query)
         results = cursor.fetchall()
-        columns = ['Date', 'Open', 'High', 'Low', 'Close', 'Adj Close', 'Volume']
-        print('\n', pd.DataFrame(results, columns=columns))
+        column_exists = conn.execute(f'PRAGMA table_info(`{table_name}`);')
+        column_names = [col[1] for col in column_exists]
+        print('\n', pd.DataFrame(results, columns=column_names))
     except IndexError:
         print(f'No data for {symbol}')
     conn.close()

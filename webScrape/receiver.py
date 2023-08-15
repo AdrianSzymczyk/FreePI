@@ -7,7 +7,17 @@ from pathlib import Path
 from config import config
 
 
-def receiver(connection, symbol_table_name, start_date, end_date):
+def receiver(connection: sqlite3.connect, symbol_table_name: str, start_date: datetime.date, end_date: datetime.date,
+             change_index: bool = False) -> pd.DataFrame:
+    """
+    Return stock data from the database symbol table
+    :param connection: Connection to the SQLite database
+    :param symbol_table_name: Name of the stock symbol table
+    :param start_date: Beginning of the period of time, valid format: "2021-09-08"
+    :param end_date: End of the period of time, valid format: "2021-08-08"
+    :param change_index: Whether to set date as indices in data
+    :return: Pandas DataFrame with stock data from a date range
+    """
     # Query to fetch symbol data from the database
     fetch_query = f"""
             SELECT * 
@@ -20,9 +30,11 @@ def receiver(connection, symbol_table_name, start_date, end_date):
     result: List[Tuple[str, str, str, str, str, str, str]] = cursor.fetchall()
 
     # Create and save data inside the Pandas DataFrame
-    columns: List[str] = ['Date', 'Open', 'High', 'Low', 'Close', 'Adj Close', 'Volume']
-    df_symbol: pd.DataFrame = pd.DataFrame(result, columns=columns)
-    df_symbol.set_index('Date', inplace=True)
+    column_exists = connection.execute(f'PRAGMA table_info(`{symbol_table_name}`);')
+    column_names = [col[1] for col in column_exists]
+    df_symbol: pd.DataFrame = pd.DataFrame(result, columns=column_names)
+    if change_index:
+        df_symbol.set_index('Date', inplace=True)
 
     try:
         # Convert numeric columns to appropriate data type
@@ -40,13 +52,16 @@ def receiver(connection, symbol_table_name, start_date, end_date):
     return df_symbol
 
 
-def receive_data(symbol: str, start: str, end: str, frequency: str = '1d') -> pd.DataFrame:
+def receive_data(symbol: str, start: str = '1980-01-01',
+                 end: str = datetime.strftime(datetime.now().date(), '%Y-%m-%d'),
+                 frequency: str = '1d', change_index: bool = False) -> pd.DataFrame:
     """
     Return data from a date range from a specific stock symbol
     :param symbol: Stock market symbol
     :param start: Beginning of the period of time, valid format: "2021-09-08"
     :param end: End of the period of time, valid format: "2021-08-08"
     :param frequency: String defining the frequency of the data, defaults-1d, possible values: [1d, 1wk, 1mo]
+    :param change_index: Whether to set date as indices in data
     :return: Pandas DataFrame with stock data from a date range
     """
     # Convert passed start and end dates into datetime.date format
@@ -58,13 +73,13 @@ def receive_data(symbol: str, start: str, end: str, frequency: str = '1d') -> pd
     # Get the name of the symbol table
     symbol_table_name: str = app.get_name_of_symbol_table(symbol, frequency, conn)
     if symbol_table_name is not None:
-        return receiver(conn, symbol_table_name, start_date, end_date)
+        return receiver(conn, symbol_table_name, start_date, end_date, change_index)
     else:
         app.download_historical_data(symbol, start, end, frequency)
         # Get the name of the symbol table
         symbol_table_name = app.get_name_of_symbol_table(symbol, frequency, conn)
         if symbol_table_name is not None:
-            return receiver(conn, symbol_table_name, start_date, end_date)
+            return receiver(conn, symbol_table_name, start_date, end_date, change_index)
     return f'Given symbol {symbol} does not exist'
 
 

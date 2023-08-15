@@ -88,11 +88,11 @@ async def _read_data(request: Request, symbol: str, function: str) -> Dict:
         - **function**: determine time series
         """
     if function == 'TIME_SERIES_WEEKLY':
-        stock_data = receiver.receive_data(symbol=symbol, frequency='1wk')
+        stock_data = receiver.receive_data(symbol=symbol, frequency='1wk', change_index=True)
     elif function == 'TIME_SERIES_MONTHLY':
-        stock_data = receiver.receive_data(symbol=symbol, frequency='1mo')
+        stock_data = receiver.receive_data(symbol=symbol, frequency='1mo', change_index=True)
     elif function == 'TIME_SERIES_DAILY':
-        stock_data = receiver.receive_data(symbol=symbol, frequency='1d')
+        stock_data = receiver.receive_data(symbol=symbol, frequency='1d', change_index=True)
     else:
         raise HTTPException(status_code=400, detail='Invalid function parameter')
     res = stock_data.to_json(orient='index')
@@ -108,14 +108,14 @@ async def _read_data(request: Request, symbol: str, function: str) -> Dict:
 
 @app.get('/indicators', tags=['MACD', 'RSI'])
 @create_response
-async def _macd(request: Request, symbol: str, function: str) -> Dict:
-    stock_data = receiver.receive_data(symbol=symbol, frequency='1d')
+async def _indicators(request: Request, symbol: str, function: str) -> Dict:
+    # stock_data = receiver.receive_data(symbol=symbol, frequency='1d')
     if function == 'MACD':
-        enhanced_data = technical_indicators.calculate_MACD(stock_data)
+        enhanced_data = technical_indicators.calculate_MACD(symbol)
     elif function == 'RSI':
-        enhanced_data = technical_indicators.calculate_RSI(stock_data)
+        enhanced_data = technical_indicators.calculate_RSI(symbol)
     elif function == 'EMA':
-        enhanced_data = technical_indicators.calculate_EMA(stock_data)
+        enhanced_data = technical_indicators.calculate_EMA(symbol)
     else:
         raise HTTPException(status_code=400, detail='Invalid function parameter')
     res = enhanced_data.to_json(orient='index')
@@ -124,7 +124,7 @@ async def _macd(request: Request, symbol: str, function: str) -> Dict:
         'message': HTTPStatus.OK.phrase,
         'symbol': symbol,
         'status-code': HTTPStatus.OK,
-        'data': {function: parsed}
+        'data': parsed
     }
     return response
 
