@@ -108,24 +108,24 @@ async def _read_data(request: Request, symbol: str, function: str) -> Dict:
 
 @app.get('/indicators', tags=['MACD', 'RSI', 'EMA'])
 @create_response
-async def _indicators(request: Request, symbol: str, function: str) -> Dict:
+async def _indicators(request: Request, symbol: str, function: str, time_period: int = 14, fast_period: int = 12,
+                      slow_period: int = 26, signal_period: int = 9) -> Dict:
     if function == 'MACD':
-        enhanced_data = technical_indicators.get_indicator(symbol, 'MACD')
+        enhanced_data = technical_indicators.get_indicator(symbol, 'MACD', fast_period=fast_period,
+                                                           slow_period=slow_period, signal_period=signal_period)
     elif function == 'RSI':
-        enhanced_data = technical_indicators.get_indicator(symbol, 'RSI')
+        enhanced_data = technical_indicators.get_indicator(symbol, 'RSI', period=time_period)
     elif function == 'EMA':
-        enhanced_data = technical_indicators.get_indicator(symbol, 'EMA')
+        enhanced_data = technical_indicators.get_indicator(symbol, 'EMA', period=time_period)
     else:
         raise HTTPException(status_code=400, detail='Invalid function parameter')
     res = enhanced_data.to_json(orient='index')
-    parsed = json.loads(res)
-    response = {
+    return {
         'message': HTTPStatus.OK.phrase,
         'symbol': symbol,
         'status-code': HTTPStatus.OK,
-        'data': parsed
+        'data': json.loads(res)
     }
-    return response
 
 
 # if __name__ == '__main__':

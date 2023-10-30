@@ -26,6 +26,7 @@ def setup_webdriver() -> webdriver:
     Create and configure webdriver options and add extensions.
     :return: Webdriver for remote access to browser
     """
+    # Setup options for Chrome browser
     chrome_options = webdriver.ChromeOptions()
     chrome_options.add_extension(Path(config.EXTENSIONS_DICT, 'u_block_extension.crx'))
     chrome_options.add_experimental_option('detach', True)
@@ -38,9 +39,12 @@ def setup_webdriver() -> webdriver:
     # Exclude the collection of enable-automation switches
     chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
 
+    # Setup version of the chromedriver
+    chrome_service = webdriver.ChromeService(executable_path='../extensions/chromedriver.exe')
+
     # Turn-off userAutomationExtension
     chrome_options.add_experimental_option("useAutomationExtension", False)
-    chr_driver = webdriver.Chrome(options=chrome_options)
+    chr_driver = webdriver.Chrome(options=chrome_options, service=chrome_service)
     chr_driver.set_page_load_timeout(15)
     return chr_driver
 
@@ -99,7 +103,9 @@ def get_name_of_symbol_table(symbol: str, frequency: str, connection: sqlite3.Co
 
     if connection is None:
         connection = sqlite3.connect(f'{Path(config.DATA_DICT, "stock_database.db")}')
-    find_table_query = f"SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '%{symbol.lower()}%freq={frequency}%';"
+    find_table_query = (f"SELECT name "
+                        f"FROM sqlite_master "
+                        f"WHERE type='table' AND name LIKE '%{symbol.lower()}%freq={frequency}%';")
     cursor = connection.execute(find_table_query)
     try:
         all_tables = cursor.fetchall()
@@ -354,7 +360,7 @@ def symbol_handler(driver: webdriver, symbol: str, start_date: datetime, end_dat
         print('Data in the given date range already exists')
 
 
-def reset_database():
+def reset_database() -> None:
     """Reset database by deleting it and creating new one"""
     try:
         backup_database()
@@ -365,7 +371,8 @@ def reset_database():
     conn.close()
 
 
-def backup_database():
+def backup_database() ->None:
+    """Create a backup version of the database"""
     current_day = datetime.now().date()
     database_path: Path = Path(config.DATA_DICT, 'stock_database.db')
     backup_path: Path = Path(config.DATA_DICT, 'backups', f'backup_database_{current_day}.db')
@@ -394,10 +401,6 @@ def delete_duplicates(connection: sqlite3.Connection, table_name: str) -> None:
         );
     '''
     cursor = connection.cursor()
-    # cursor.execute(duplicate_query)
-    # duplicates = cursor.fetchall()
-    # for duplicate in duplicates:
-    #     print(duplicate)
     cursor.execute(delete_duplicate_query)
     connection.commit()
 
@@ -414,20 +417,21 @@ def save_into_database(connection: sqlite3.Connection, data: pd.DataFrame, symbo
     :param end_date: End of the period of time
     :param frequency: String specifying the frequency of the data, defaults-1d, possible values: [1d, 1wk, 1mo]
     """
-    # save_data(stock_df, symbols, start_to_file, end_to_file, frequency)
+    # Create a table name
     table_name = f'stock_{symbol.lower()}_{start_date}-{end_date}&freq={frequency}'
-    # Define the table schema (replace 'your_table_name' and 'column1', 'column2', etc. with your table and column names)
+    # Define the table schema
     create_table_query = '''
                     CREATE TABLE IF NOT EXISTS master_table (
-                        column1 Stock_symbol,
-                        column2 Table_name
+                        "symbol" Stock_symbol,
+                        "table_name" Table_name,
+                        PRIMARY KEY("symbol")
                     );
                     '''
     # Execute the query to create the table
     connection.execute(create_table_query)
     insert_query = '''
-                    INSERT INTO master_table (column1, column2)
-                    VALUES (?, ?);
+                    INSERT OR REPLACE INTO master_table (symbol, table_name)
+                    VALUES ((SELECT symbol FROM master_table WHERE symbol = ?), ?);
                     '''
     connection.execute(insert_query, (symbol, table_name))
 
@@ -440,7 +444,7 @@ def save_into_database(connection: sqlite3.Connection, data: pd.DataFrame, symbo
                 if database_table_name.split('_')[2] == 'oldest':
                     table_start = 'oldest_' + str(table_start)
                 table_name = f'stock_{symbol.lower()}_{table_start}-{end_date}&freq={frequency}'
-        # Add Panda dataframe to the sql database
+        # Add Pandas dataframe to the sql database
         data.to_sql(database_table_name, connection, if_exists='append', index=False)
         change_table_name_query = f'ALTER TABLE `{database_table_name}` RENAME TO `{table_name}`'
         cursor = connection.cursor()
@@ -488,6 +492,7 @@ def download_historical_data(symbols: Union[str, List[str], np.ndarray], start: 
     driver = setup_webdriver()
     # Connect to or create the database file
     conn = sqlite3.connect(f'{Path(config.DATA_DICT, "stock_database.db")}')
+    # Execute downloading for single symbol
     if isinstance(symbols, str):
         try:
             # Create DataFrame with downloaded data from webpage
@@ -501,6 +506,7 @@ def download_historical_data(symbols: Union[str, List[str], np.ndarray], start: 
                 return stock_df
         except TypeError:
             pass
+    # Execute downloading for an array of the symbols
     elif isinstance(symbols, list) or isinstance(symbols, np.ndarray):
         all_symbols_df: list = []
         for symbol in symbols:
@@ -641,10 +647,10 @@ def fetch_from_database(symbol, frequency) -> None:
 
 if __name__ == '__main__':
     pass
-
+    current_day = datetime.now().date()
     # Database tests
     # reset_database()
-    # download_historical_data(['TSLA', 'NVDA'], start='2022-10-01', end='2023-01-01', frequency='1d')
+    download_historical_data(['TSLA', 'NVDA'], start='2022-10-01', end=str(current_day), frequency='1d')
     # download_historical_data(['TSLA', 'NVDA'], start='2021-12-20', end='2023-01-01', frequency='1d')
     # download_historical_data(['TSLA', 'NVDA'], start='2021-12-20', end='2023-01-07', frequency='1d')
 
@@ -683,7 +689,7 @@ if __name__ == '__main__':
     df = pd.read_csv(Path(config.DATA_DICT, 'stock_symbols.csv'), header=None)
     stock_symbols = df[0].values
     # download_historical_data(symbols=stock_symbols, start='1980-01-01', end='2023-08-04')
-    update_historical_data(stock_symbols, '1d')
+    # update_historical_data(stock_symbols, '1d')
     # display_database_tables()
 
     # download_historical_data('RIOT', start='1980-01-01', end='2023-08-03')
