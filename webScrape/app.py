@@ -17,7 +17,6 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.wait import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.common.keys import Keys
 import selenium.common.exceptions
 
 
@@ -226,29 +225,26 @@ def symbol_handler(driver: webdriver, symbol: str, start_date: datetime, end_dat
         # Collect all data from the webpage
         all_data_loaded: bool = False
         while not all_data_loaded:
-            # Variables to detect not loading website
-            loading_message: str = '#Col1-1-HistoricalDataTable-Proxy > section > div.Pb\(10px\).Ovx\(a\).W\(100\%\) > div'
-            tmp_last_date: datetime.date = end_date.date()
             # Variables to handle freezing webpage and not scrolling down
             endless_loop: bool = False
-            first_check: int = 0
-            double_check: int = 0
             WebDriverWait(driver, 10).until(
                 EC.presence_of_element_located(
                     (By.XPATH, '//*[@id="Col1-1-HistoricalDataTable-Proxy"]/section/div[2]/table'))
             )
-            start_timer = time.perf_counter()
+
+            # Get the initial scroll position
+            prev_scroll_position = driver.execute_script("return window.pageYOffset;")
             while True:
-                end_timer = time.perf_counter()
                 # Scroll down to bottom
-                # driver.execute_script(
-                #     'window.scrollTo(0, document.getElementById("render-target-default").scrollHeight);')
                 try:
-                    driver.find_element(By.TAG_NAME, 'body').send_keys(Keys.PAGE_DOWN)
+                    driver.execute_script(
+                        'window.scrollTo(0, document.getElementById("render-target-default").scrollHeight);')
                 except selenium.common.exceptions.StaleElementReferenceException:
                     driver.refresh()
                 # Wait to load page
-                time.sleep(0.1)
+                time.sleep(0.2)
+                # Get the current scroll position
+                current_scroll_position = driver.execute_script("return window.pageYOffset;")
                 try:
                     last_row_date = driver.find_element(By.CSS_SELECTOR,
                                                         '#Col1-1-HistoricalDataTable-Proxy > section > div.Pb\(10px\).Ovx\(a\).W\(100\%\) > table > tbody > tr:last-child > td.Py\(10px\).Ta\(start\)')
@@ -262,11 +258,6 @@ def symbol_handler(driver: webdriver, symbol: str, start_date: datetime, end_dat
                     last_date: datetime.date = datetime.strptime(last_row_date.text, "%b %d, %Y").date()
                 except AttributeError:
                     last_date = datetime.now().date()
-                # Reset freezing page variables
-                if first_check > 10:
-                    if str(last_date) != str(tmp_last_date):
-                        double_check = 0
-                        first_check = 0
                 # Adjust lower and upper limits of last displayed date
                 if frequency == '1wk':
                     lower_start_limit: datetime.date = start_date - timedelta(days=7)
@@ -279,19 +270,9 @@ def symbol_handler(driver: webdriver, symbol: str, start_date: datetime, end_dat
                     upper_start_limit: datetime.date = start_date + timedelta(days=4)
                 # Check whether all the data loaded
                 try:
-                    loading_message_element = driver.find_element(By.CSS_SELECTOR, loading_message)
                     if lower_start_limit < last_date < upper_start_limit:
                         all_data_loaded = True
                         break
-                    # Infinity loading page
-                    elif str(last_date) == str(tmp_last_date) and loading_message_element and (end_timer - start_timer) < 7:
-                        if double_check > 10:
-                            endless_loop = True
-                            # Reset not loading variables
-                            first_check = 0
-                            double_check = 0
-                            break
-                        double_check += 1
                 except selenium.common.exceptions.NoSuchElementException:
                     print('Reached the end of the data')
                     all_data_loaded = True
@@ -300,10 +281,13 @@ def symbol_handler(driver: webdriver, symbol: str, start_date: datetime, end_dat
                     break
                     # if str(last_date) == str(tmp_last_date):
 
-                # Handle variables responsible for refreshing page when driver gets stuck
-                first_check += 1
-                if first_check > 10:
-                    tmp_last_date = last_date
+                # If the current scroll position is the same as the previous position, you've reached the end
+                if current_scroll_position == prev_scroll_position:
+                    endless_loop = True
+                    break
+
+                # Update the previous scroll position for the next iteration
+                prev_scroll_position = current_scroll_position
             # Refresh webpage caused by not loading data
             if endless_loop:
                 print('Refreshing page!!!')
@@ -357,7 +341,7 @@ def symbol_handler(driver: webdriver, symbol: str, start_date: datetime, end_dat
         else:
             return stock_df, start_date
     else:
-        print('Data in the given date range already exists')
+        print('Data in a given date range already exists')
 
 
 def reset_database() -> None:
@@ -649,8 +633,8 @@ if __name__ == '__main__':
     pass
     current_day = datetime.now().date()
     # Database tests
-    # reset_database()
-    download_historical_data(['TSLA', 'NVDA'], start='2022-10-01', end=str(current_day), frequency='1d')
+    reset_database()
+    # download_historical_data(['TSLA', 'NVDA'], start='2012-10-01', end=str(current_day), frequency='1d')
     # download_historical_data(['TSLA', 'NVDA'], start='2021-12-20', end='2023-01-01', frequency='1d')
     # download_historical_data(['TSLA', 'NVDA'], start='2021-12-20', end='2023-01-07', frequency='1d')
 
@@ -688,6 +672,10 @@ if __name__ == '__main__':
     # reset_database()
     df = pd.read_csv(Path(config.DATA_DICT, 'stock_symbols.csv'), header=None)
     stock_symbols = df[0].values
+
+    # Freezing page test
+    download_historical_data(symbols=stock_symbols, start='2022-01-01', end=str(current_day))
+
     # download_historical_data(symbols=stock_symbols, start='1980-01-01', end='2023-08-04')
     # update_historical_data(stock_symbols, '1d')
     # display_database_tables()
