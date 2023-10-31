@@ -75,7 +75,7 @@ def receive_data(symbol: str, start: str = '1980-01-01',
     if symbol_table_name is not None:
         # Check whether the receiver date range is covered by existing data
         table_start, table_end = app.extract_date_from_file(symbol_table_name)
-        if start_date < table_start or end_date > table_end:
+        if (start_date < table_start and symbol_table_name.split('_')[2] != 'oldest') or end_date > table_end:
             app.download_historical_data(symbol, start, end, frequency)
             # Update table name
             symbol_table_name = app.get_name_of_symbol_table(symbol, frequency, conn)
@@ -94,5 +94,6 @@ if __name__ == "__main__":
     # print(receive_data('TSLA', '2009-01-01', '2023-07-12'))
     # print(receive_data('AAPL', '2021-01-01', '2023-07-12'))
     # print(receive_data('XZAA', '2021-01-01', '2023-07-12'))
-    print(receive_data('TSLA', '2019-01-01', '2023-09-12'))
+    # print(receive_data('TSLA', '2019-01-01', '2023-09-12'))
+    print(receive_data('NVDA', frequency='1mo', change_index=True))
     # app.display_database_tables()

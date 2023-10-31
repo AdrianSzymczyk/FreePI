@@ -43,7 +43,10 @@ def setup_webdriver() -> webdriver:
 
     # Turn-off userAutomationExtension
     chrome_options.add_experimental_option("useAutomationExtension", False)
-    chr_driver = webdriver.Chrome(options=chrome_options, service=chrome_service)
+    try:
+        chr_driver = webdriver.Chrome(options=chrome_options, service=chrome_service)
+    except selenium.common.exceptions.NoSuchDriverException:
+        chr_driver = webdriver.Chrome(options=chrome_options)
     chr_driver.set_page_load_timeout(15)
     return chr_driver
 
@@ -258,23 +261,24 @@ def symbol_handler(driver: webdriver, symbol: str, start_date: datetime, end_dat
                 else:
                     lower_start_limit: datetime.date = start_date - timedelta(days=4)
                     upper_start_limit: datetime.date = start_date + timedelta(days=4)
+
                 # Check whether all the data loaded
-                try:
-                    if lower_start_limit < last_date < upper_start_limit:
-                        all_data_loaded = True
-                        break
-                except selenium.common.exceptions.NoSuchElementException:
-                    print('Reached the end of the data')
+                if lower_start_limit < last_date < upper_start_limit:
                     all_data_loaded = True
-                    # Change start date into last date from the yahoo finance
-                    start_date = 'oldest_' + str(last_date)
                     break
-                    # if str(last_date) == str(tmp_last_date):
 
                 # If the current scroll position is the same as the previous position, you've reached the end
                 if current_scroll_position == prev_scroll_position:
-                    endless_loop = True
-                    break
+                    try:
+                        driver.find_element(By.XPATH, '//*[@id="Col1-1-HistoricalDataTable-Proxy"]/section/div[2]/div')
+                        endless_loop = True
+                        break
+                    except selenium.common.exceptions.NoSuchElementException:
+                        print('Reached the end of the data')
+                        all_data_loaded = True
+                        # Change start date into last date from the yahoo finance
+                        start_date = 'oldest_' + str(last_date)
+                        break
 
                 # Update the previous scroll position for the next iteration
                 prev_scroll_position = current_scroll_position
@@ -282,9 +286,10 @@ def symbol_handler(driver: webdriver, symbol: str, start_date: datetime, end_dat
             if endless_loop:
                 print('Refreshing page!!!')
                 driver.refresh()
+
+        # Get all data from the loaded table
         stock_table = driver.find_element(By.XPATH,
                                           '//*[@id="Col1-1-HistoricalDataTable-Proxy"]/section/div[2]/table')
-
         # Merge downloaded data into arrays and format it
         tmp_arr: np.array = np.array(stock_table.text.split('\n'))
         separated_data = [re.split(r'\s+(?!Close\*\*)', line) for line in tmp_arr[:-1]
@@ -407,7 +412,7 @@ def save_into_database(connection: sqlite3.Connection, data: pd.DataFrame, symbo
                     INSERT OR REPLACE INTO master_table (symbol, table_name)
                     VALUES (?, ?);
                     '''
-    connection.execute(insert_query, (symbol, table_name))
+    connection.execute(insert_query, (symbol + '_' + frequency, table_name))
 
     # Get the name of the stock symbol table
     database_table_name: str = get_name_of_symbol_table(symbol, frequency, connection)
@@ -624,12 +629,12 @@ if __name__ == '__main__':
     current_day = datetime.now().date()
     # Database tests
     # reset_database()
-    download_historical_data(['TSLA', 'NVDA'], start='2020-08-01', end='2023-03-01', frequency='1d')
+    download_historical_data(['TSLA', 'NVDA'], start='1990-08-01', end='2023-04-01', frequency='1mo')
     # download_historical_data(['TSLA', 'NVDA'], start='2021-12-20', end='2023-01-01', frequency='1d')
     # download_historical_data(['TSLA', 'NVDA'], start='2021-12-20', end='2023-01-07', frequency='1d')
 
     # Oldest data tests
-    # download_historical_data(['TSLA'], start='2009-12-20', end='2023-08-02', frequency='1d')
+    # download_historical_data(['TSLA'], start='2000-12-20', end='2023-08-02', frequency='1d')
     # download_historical_data(['TSLA'], start='2009-12-20', end='2023-08-04', frequency='1d')
     # download_historical_data(['TSLA'], start='2009-12-20', end='2023-07-04', frequency='1d')
     # download_historical_data(['TSLA'], start='2012-12-20', end='2023-07-04', frequency='1d')
