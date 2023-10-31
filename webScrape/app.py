@@ -70,6 +70,7 @@ def timer(func):
         end_time = time.perf_counter()
         run_time = end_time - start_time
         print(f'Finished {func.__name__!r} in {run_time:.3f} sec.')
+
     return wrapper
 
 
@@ -104,7 +105,7 @@ def get_name_of_symbol_table(symbol: str, frequency: str, connection: sqlite3.Co
         connection = sqlite3.connect(f'{Path(config.DATA_DICT, "stock_database.db")}')
     find_table_query = (f"SELECT name "
                         f"FROM sqlite_master "
-                        f"WHERE type='table' AND name LIKE '%{symbol.lower()}%freq={frequency}%';")
+                        f"WHERE type='table' AND name LIKE '%{symbol}%freq={frequency}%';")
     cursor = connection.execute(find_table_query)
     try:
         all_tables = cursor.fetchall()
@@ -132,35 +133,24 @@ def date_and_freq_check(symbol: str, input_start_date: datetime, input_end_date:
             table_start, table_end = extract_date_from_file(database_table_name)
             if database_table_name.split('_')[2] == 'oldest':
                 oldest = True
-            if table_start <= input_start_date <= table_end:
-                if table_start <= input_end_date <= table_end:
-                    return False
+            if table_start <= input_start_date and input_end_date <= table_end:
+                return False
             if not oldest:
-                if input_start_date < table_start:
-                    if input_end_date <= table_end:
-                        table_start = datetime.strptime(datetime.strftime(table_start, '%Y-%m-%d'),
-                                                        '%Y-%m-%d')
-                        return True, table_start, 'start'
-                    elif input_end_date > table_end:
-                        return True
-                elif input_start_date >= table_start:
-                    if input_end_date > table_end:
-                        table_end = datetime.strptime(datetime.strftime(table_end, '%Y-%m-%d'),
-                                                      '%Y-%m-%d')
-                        return True, table_end, 'end'
+                if input_start_date < table_start and input_end_date <= table_end:
+                    table_start = datetime(table_start.year, table_start.month, table_start.day)
+                    return True, table_start, 'start'
+                elif input_start_date >= table_start and input_end_date > table_end:
+                    table_end = datetime(table_end.year, table_end.month, table_end.day)
+                    return True, table_end, 'end'
             else:
                 if input_end_date > table_end:
-                    table_end = datetime.strptime(datetime.strftime(table_end, '%Y-%m-%d'),
-                                                  '%Y-%m-%d')
+                    table_end = datetime(table_end.year, table_end.month, table_end.day)
                     return True, (table_start, table_end), 'oldest'
-                else:
-                    return False
-        else:
-            return True
+                return False
+        return True
     except IndexError:
         print(f'{symbol} table missing from database')
         return True
-    return False
 
 
 def symbol_handler(driver: webdriver, symbol: str, start_date: datetime, end_date: datetime,
@@ -355,7 +345,7 @@ def reset_database() -> None:
     conn.close()
 
 
-def backup_database() ->None:
+def backup_database() -> None:
     """Create a backup version of the database"""
     current_day = datetime.now().date()
     database_path: Path = Path(config.DATA_DICT, 'stock_database.db')
@@ -402,12 +392,12 @@ def save_into_database(connection: sqlite3.Connection, data: pd.DataFrame, symbo
     :param frequency: String specifying the frequency of the data, defaults-1d, possible values: [1d, 1wk, 1mo]
     """
     # Create a table name
-    table_name = f'stock_{symbol.lower()}_{start_date}-{end_date}&freq={frequency}'
+    table_name = f'stock_{symbol}_{start_date}-{end_date}&freq={frequency}'
     # Define the table schema
     create_table_query = '''
                     CREATE TABLE IF NOT EXISTS master_table (
-                        "symbol" Stock_symbol,
-                        "table_name" Table_name,
+                        "symbol" TEXT,
+                        "table_name" TEXT,
                         PRIMARY KEY("symbol")
                     );
                     '''
@@ -415,7 +405,7 @@ def save_into_database(connection: sqlite3.Connection, data: pd.DataFrame, symbo
     connection.execute(create_table_query)
     insert_query = '''
                     INSERT OR REPLACE INTO master_table (symbol, table_name)
-                    VALUES ((SELECT symbol FROM master_table WHERE symbol = ?), ?);
+                    VALUES (?, ?);
                     '''
     connection.execute(insert_query, (symbol, table_name))
 
@@ -427,7 +417,7 @@ def save_into_database(connection: sqlite3.Connection, data: pd.DataFrame, symbo
             if table_start < start_date:
                 if database_table_name.split('_')[2] == 'oldest':
                     table_start = 'oldest_' + str(table_start)
-                table_name = f'stock_{symbol.lower()}_{table_start}-{end_date}&freq={frequency}'
+                table_name = f'stock_{symbol}_{table_start}-{end_date}&freq={frequency}'
         # Add Pandas dataframe to the sql database
         data.to_sql(database_table_name, connection, if_exists='append', index=False)
         change_table_name_query = f'ALTER TABLE `{database_table_name}` RENAME TO `{table_name}`'
@@ -633,8 +623,8 @@ if __name__ == '__main__':
     pass
     current_day = datetime.now().date()
     # Database tests
-    reset_database()
-    # download_historical_data(['TSLA', 'NVDA'], start='2012-10-01', end=str(current_day), frequency='1d')
+    # reset_database()
+    download_historical_data(['TSLA', 'NVDA'], start='2020-08-01', end='2023-03-01', frequency='1d')
     # download_historical_data(['TSLA', 'NVDA'], start='2021-12-20', end='2023-01-01', frequency='1d')
     # download_historical_data(['TSLA', 'NVDA'], start='2021-12-20', end='2023-01-07', frequency='1d')
 
@@ -674,7 +664,7 @@ if __name__ == '__main__':
     stock_symbols = df[0].values
 
     # Freezing page test
-    download_historical_data(symbols=stock_symbols, start='2022-01-01', end=str(current_day))
+    # download_historical_data(symbols=stock_symbols, start='2022-01-01', end=str(current_day))
 
     # download_historical_data(symbols=stock_symbols, start='1980-01-01', end='2023-08-04')
     # update_historical_data(stock_symbols, '1d')
