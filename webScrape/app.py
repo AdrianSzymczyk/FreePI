@@ -95,7 +95,7 @@ def extract_date_from_file(file: str) -> (datetime.date, datetime.date):
     return file_start, file_end
 
 
-def get_name_of_symbol_table(symbol: str, frequency: str, connection: sqlite3.Connection = None) -> str:
+def get_name_of_symbol_table(symbol: str, frequency: str, connection: Union[None, sqlite3.Connection] = None) -> str:
     """
     Get the name of the stock symbol table from the database
     :param symbol: Stock market symbol
@@ -603,25 +603,27 @@ def update_historical_data(symbols: Union[str, List[str], np.ndarray], frequency
     backup_database()
 
 
-def fetch_from_database(symbol, frequency) -> None:
+def fetch_from_database(symbol: str, frequency: str, connection: Union[sqlite3.Connection, None] = None) -> None:
     """
     Fetch and display data from the database symbol table
+    :param connection: Connection to the database.
     :param symbol: Stock symbol, accepts a single symbol or a list of symbols
     :param frequency: String specifying the frequency of the data, defaults-1d, possible values: [1d, 1wk, 1mo]
     """
-    conn = sqlite3.connect(f'{Path(config.DATA_DICT, "stock_database.db")}')
+    if connection is None:
+        connection = sqlite3.connect(f'{Path(config.DATA_DICT, "stock_database.db")}')
     try:
-        table_name = get_name_of_symbol_table(symbol, frequency, conn)
-        sort_query = f'SELECT * FROM `{table_name}` ORDER BY Date DESC'
-        cursor = conn.execute(sort_query)
+        table_name: str = get_name_of_symbol_table(symbol, frequency, connection)
+        sort_query: str = f'SELECT * FROM `{table_name}` ORDER BY Date DESC'
+        cursor = connection.execute(sort_query)
         results = cursor.fetchall()
         # Fetch all the table columns
-        column_exists = conn.execute(f'PRAGMA table_info(`{table_name}`);')
+        column_exists = connection.execute(f'PRAGMA table_info(`{table_name}`);')
         table_columns = [col[1] for col in column_exists]
         print('\n', pd.DataFrame(results, columns=table_columns))
     except IndexError:
         print(f'No data for {symbol}')
-    conn.close()
+    connection.close()
 
 
 if __name__ == '__main__':
