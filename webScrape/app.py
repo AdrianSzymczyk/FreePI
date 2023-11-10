@@ -1,6 +1,7 @@
 import functools
 import os
 import sqlite3
+import subprocess
 import time
 import shutil
 from datetime import datetime, timezone, timedelta
@@ -27,7 +28,7 @@ def setup_webdriver() -> webdriver:
     """
     # Setup options for Chrome browser
     chrome_options = webdriver.ChromeOptions()
-    chrome_options.add_extension(Path(config.EXTENSIONS_DICT, 'u_block_extension.crx'))
+    # chrome_options.add_extension(Path(config.EXTENSIONS_DICT, 'u_block_extension.crx'))
     chrome_options.add_experimental_option('detach', True)
     chrome_options.add_argument(
         'user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) '
@@ -39,14 +40,17 @@ def setup_webdriver() -> webdriver:
     chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
 
     # Setup version of the chromedriver
-    chrome_service = webdriver.ChromeService(executable_path='../extensions/chromedriver.exe')
+    chrome_service = webdriver.ChromeService(executable_path='../extensions/chromedriver.exe',
+                                             service_args=['--disable-build-check'])
 
     # Turn-off userAutomationExtension
     chrome_options.add_experimental_option("useAutomationExtension", False)
     try:
         chr_driver = webdriver.Chrome(options=chrome_options, service=chrome_service)
     except selenium.common.exceptions.NoSuchDriverException:
-        chr_driver = webdriver.Chrome(options=chrome_options)
+        service = webdriver.ChromeService(service_args=['--log-level=OFF', '--disable-build-check'],
+                                          log_output=subprocess.STDOUT)
+        chr_driver = webdriver.Chrome(service=service, options=chrome_options)
     chr_driver.set_page_load_timeout(15)
     return chr_driver
 
@@ -69,43 +73,45 @@ def timer(func):
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         start_time = time.perf_counter()
-        func(*args, **kwargs)
+        result = func(*args, **kwargs)
         end_time = time.perf_counter()
         run_time = end_time - start_time
         print(f'Finished {func.__name__!r} in {run_time:.3f} sec.')
-
+        return result
     return wrapper
 
 
-def extract_date_from_file(file: str) -> (datetime.date, datetime.date):
+def extract_date_from_table(table: str) -> (datetime.date, datetime.date):
     """
     Get the range of the data.
-    :param file: Name of the file
-    :return: Start and end dates from the file name
+    :param table: Name of the table
+    :return: Start and end dates from the table name
     """
     # Check that the data comes from the longest range
-    if len(file.split('_')) > 3:
-        file_date = file.split('_')[3].split('&')[0]
-    elif len(file.split('_')) > 2:
-        file_date = file.split('_')[2].split('&')[0]
+    if len(table.split('_')) > 3:
+        table_date = table.split('_')[3].split('&')[0]
+    elif len(table.split('_')) > 2:
+        table_date = table.split('_')[2].split('&')[0]
     else:
-        file_date = file.split('_')[1].split('&')[0]
-    file_start = datetime.strptime(file_date[:10], '%Y-%m-%d').date()
-    file_end = datetime.strptime(file_date[11:], '%Y-%m-%d').date()
-    return file_start, file_end
+        table_date = table.split('_')[1].split('&')[0]
+    table_start = datetime.strptime(table_date[:10], '%Y-%m-%d').date()
+    table_end = datetime.strptime(table_date[11:], '%Y-%m-%d').date()
+    return table_start, table_end
 
 
-def get_name_of_symbol_table(symbol: str, frequency: str, connection: Union[None, sqlite3.Connection] = None) -> str:
+def get_name_of_symbol_table(symbol: str, frequency: str, connection: Union[None, sqlite3.Connection] = None,
+                             database_name: str = 'stock_database.db') -> str:
     """
     Get the name of the stock symbol table from the database
     :param symbol: Stock market symbol
     :param frequency: String specifying the frequency of the data, defaults-1d, possible values: [1d, 1wk, 1mo]
     :param connection: Connection to the SQLite database
+    :param database_name: Name of the database where data will be saved. Default "stock_database"
     :return: Name of the stock symbol table
     """
 
     if connection is None:
-        connection = sqlite3.connect(f'{Path(config.DATA_DICT, "stock_database.db")}')
+        connection = sqlite3.connect(f'{Path(config.DATA_DICT, database_name)}')
     find_table_query = (f"SELECT name "
                         f"FROM sqlite_master "
                         f"WHERE type='table' AND name LIKE '%{symbol}%freq={frequency}%';")
@@ -119,21 +125,25 @@ def get_name_of_symbol_table(symbol: str, frequency: str, connection: Union[None
 
 
 def date_and_freq_check(symbol: str, input_start_date: datetime, input_end_date: datetime,
-                        frequency: str) -> Union[bool, Tuple[bool, datetime.date, str]]:
+                        frequency: str, connection: Union[sqlite3.Connection, None] = None,
+                        database_name: str = 'stock_database.db') \
+        -> Union[bool, Tuple[bool, datetime.date, str]]:
     """
     Check whether the given date range is covered by existing files.
     :param symbol: Stock market symbol
     :param input_start_date: Beginning of the period of time, valid format: "2021-09-08"
     :param input_end_date: End of the period of time, valid format: "2021-08-08"
     :param frequency: String defining the frequency of the data
+    :param connection: Connection to the database
+    :param database_name: Name of the database where data will be saved. Default "stock_database"
     :return: Bool value whether to download new data or tuple with extended information
     """
     # Variable to check if file is with the oldest data
     oldest: bool = False
     try:
-        database_table_name: str = get_name_of_symbol_table(symbol, frequency)
+        database_table_name: str = get_name_of_symbol_table(symbol, frequency, connection, database_name)
         if database_table_name is not None:
-            table_start, table_end = extract_date_from_file(database_table_name)
+            table_start, table_end = extract_date_from_table(database_table_name)
             if database_table_name.split('_')[2] == 'oldest':
                 oldest = True
             if table_start <= input_start_date and input_end_date <= table_end:
@@ -156,8 +166,9 @@ def date_and_freq_check(symbol: str, input_start_date: datetime, input_end_date:
         return True
 
 
+# TODO: think about the asynchronous symbol handling and saving into the database
 def symbol_handler(driver: webdriver, symbol: str, start_date: datetime, end_date: datetime,
-                   frequency: str) -> pd.DataFrame:
+                   frequency: str, database_name: str = 'stock_database.db') -> Union[pd.DataFrame, str]:
     """
     Support method for download_historical_data method and list of symbols
     :param driver: Webdriver for remote control and browsing the webpage
@@ -165,6 +176,7 @@ def symbol_handler(driver: webdriver, symbol: str, start_date: datetime, end_dat
     :param start_date: Beginning of the period of time
     :param end_date: End of the period of time
     :param frequency: String specifying the frequency of the data, defaults-1d, possible values: [1d, 1wk, 1mo]
+    :param database_name: Name of the database where data will be saved. Default "stock_database"
     :return: Pandas DataFrame with fetch data from the webpage
     """
     # Upper case symbol
@@ -172,8 +184,7 @@ def symbol_handler(driver: webdriver, symbol: str, start_date: datetime, end_dat
     use_previous_start_date: bool = False
     previous_start_date: str = ''
 
-    result = date_and_freq_check(symbol=symbol, input_start_date=start_date.date(),
-                                 input_end_date=end_date.date(), frequency=frequency)
+    result = date_and_freq_check(symbol, start_date.date(), end_date.date(), frequency, database_name=database_name)
     if isinstance(result, bool):
         condition = result
     else:
@@ -386,7 +397,8 @@ def delete_duplicates(connection: sqlite3.Connection, table_name: str) -> None:
 
 def save_into_database(connection: sqlite3.Connection, data: pd.DataFrame, symbol: str,
                        start_date: Union[datetime.date, str],
-                       end_date: datetime.date, frequency: str) -> None:
+                       end_date: datetime.date, frequency: str,
+                       database_name: str = 'stock_database.db') -> None:
     """
     Save data to a database specific table
     :param connection: Connection to the SQLite database
@@ -395,6 +407,7 @@ def save_into_database(connection: sqlite3.Connection, data: pd.DataFrame, symbo
     :param start_date: Beginning of the period of time
     :param end_date: End of the period of time
     :param frequency: String specifying the frequency of the data, defaults-1d, possible values: [1d, 1wk, 1mo]
+    :param database_name: Name of the database where data will be saved. Default "stock_database"
     """
     # Create a table name
     table_name = f'stock_{symbol}_{start_date}-{end_date}&freq={frequency}'
@@ -415,9 +428,9 @@ def save_into_database(connection: sqlite3.Connection, data: pd.DataFrame, symbo
     connection.execute(insert_query, (symbol + '_' + frequency, table_name))
 
     # Get the name of the stock symbol table
-    database_table_name: str = get_name_of_symbol_table(symbol, frequency, connection)
+    database_table_name: str = get_name_of_symbol_table(symbol, frequency, connection, database_name)
     if database_table_name is not None:
-        table_start, table_end = extract_date_from_file(database_table_name)
+        table_start, table_end = extract_date_from_table(database_table_name)
         if not isinstance(start_date, str):
             if table_start < start_date:
                 if database_table_name.split('_')[2] == 'oldest':
@@ -436,7 +449,7 @@ def save_into_database(connection: sqlite3.Connection, data: pd.DataFrame, symbo
 
 
 def download_historical_data(symbols: Union[str, List[str], np.ndarray], start: str, end: str, frequency: str = '1d',
-                             save_database: bool = True) -> pd.DataFrame:
+                             save_database: bool = True, database_name: str = 'stock_database.db') -> pd.DataFrame:
     """
     Fetch stock market data from the yahoo finance over a given period.
     :param symbols: Stock symbol, accepts a single symbol or a list of symbols
@@ -444,6 +457,7 @@ def download_historical_data(symbols: Union[str, List[str], np.ndarray], start: 
     :param end: End of the period of time, valid format: "2021-08-08"
     :param frequency: String specifying the frequency of the data, defaults-1d, possible values: [1d, 1wk, 1mo]
     :param save_database: Determine whether to save csv file. Default True
+    :param database_name: Name of the database where data will be saved. Default "stock_database"
     """
     # Check if given frequency is in correct format
     if frequency not in ['1d', '1wk', '1mo']:
@@ -470,15 +484,18 @@ def download_historical_data(symbols: Union[str, List[str], np.ndarray], start: 
     # Set up the driver and accept cookies
     driver = setup_webdriver()
     # Connect to or create the database file
-    conn = sqlite3.connect(f'{Path(config.DATA_DICT, "stock_database.db")}')
+    conn = sqlite3.connect(f'{Path(config.DATA_DICT, database_name)}')
     # Execute downloading for single symbol
     if isinstance(symbols, str):
         try:
             # Create DataFrame with downloaded data from webpage
-            stock_df, start_to_file = symbol_handler(driver, symbols, start, end, frequency)
+            stock_df, start_to_file = symbol_handler(driver, symbols, start, end, frequency, database_name)
             # Save downloaded data into csv file or return bare DataFrame
             if save_database:
                 save_into_database(conn, stock_df, symbols, start_to_file, end_to_file, frequency)
+                driver.quit()
+                conn.close()
+                return stock_df
             else:
                 driver.quit()
                 conn.close()
@@ -487,13 +504,15 @@ def download_historical_data(symbols: Union[str, List[str], np.ndarray], start: 
             pass
     # Execute downloading for an array of the symbols
     elif isinstance(symbols, list) or isinstance(symbols, np.ndarray):
-        all_symbols_df: list = []
+        all_symbols_df: List[pd.DataFrame] = []
         for symbol in symbols:
             print(f'Download_func - symbol: {symbol}')
             try:
-                stock_df, start_to_file = symbol_handler(driver, symbol, start, end, frequency)
+                stock_df, start_to_file = symbol_handler(driver, symbol, start, end, frequency, database_name)
                 if save_database:
                     save_into_database(conn, stock_df, symbol, start_to_file, end_to_file, frequency)
+                    stock_df['Company'] = symbol
+                    all_symbols_df.append(stock_df)
                 else:
                     stock_df['Company'] = symbol
                     all_symbols_df.append(stock_df)
@@ -502,10 +521,9 @@ def download_historical_data(symbols: Union[str, List[str], np.ndarray], start: 
 
         if len(all_symbols_df) != 0:
             # print('\n', pd.concat(all_symbols_df, ignore_index=True))
-            if not save_database:
-                driver.quit()
-                conn.close()
-                return pd.concat(all_symbols_df, ignore_index=True)
+            driver.quit()
+            conn.close()
+            return pd.concat(all_symbols_df, ignore_index=True)
 
     # Quit the webdriver and close the browser and database connection
     driver.quit()
@@ -532,31 +550,36 @@ def display_database_tables() -> None:
             conn.close()
 
 
-def define_update_range(symbol: str, frequency: str) -> datetime.date:
+def define_update_range(symbol: str, frequency: str, database_name: str = 'stock_database.db') -> datetime.date:
     """
     Determine new date range to download new data
     :param symbol: Stock market symbol
     :param frequency: String specifying the frequency of the data, possible values: [1d, 1wk, 1mo]
+    :param database_name: Name of the database where data will be saved. Default "stock_database"
     :return: Start date of update date range
     """
-    database_table_name: str = get_name_of_symbol_table(symbol, frequency)
+    database_table_name: str = get_name_of_symbol_table(symbol, frequency, database_name=database_name)
     if database_table_name is not None:
-        table_start, table_end = extract_date_from_file(database_table_name)
+        table_start, table_end = extract_date_from_table(database_table_name)
         return table_end
     return datetime.strptime('1980-01-01', '%Y-%m-%d').date()
 
 
 @timer
-def update_historical_data(symbols: Union[str, List[str], np.ndarray], frequency: str) -> None:
+def update_historical_data(symbols: Union[str, List[str], np.ndarray], frequency: str, save_database: bool = True,
+                           database_name: str = 'stock_database.db') -> pd.DataFrame:
     """
     Update files with latest stock market data
     :param symbols: Stock symbol, accepts a single symbol or a list of symbols
     :param frequency: String specifying the frequency of the data, possible values: [1d, 1wk, 1mo]
+    :param save_database: Determine whether to save csv file. Default True
+    :param database_name: Name of the database where data will be saved. Default "stock_database"
     """
+    updated_data: pd.DataFrame = pd.DataFrame()
     current_date = datetime.now().date()
     if isinstance(symbols, str):
         try:
-            final_table_end = define_update_range(symbols, frequency)
+            final_table_end = define_update_range(symbols, frequency, database_name)
         # Except whether wrong frequency was given
         except TypeError:
             return
@@ -564,10 +587,12 @@ def update_historical_data(symbols: Union[str, List[str], np.ndarray], frequency
             print('Nothing to update, table is up-to-date')
         else:
             # Download data from the new date range and save into symbol table
-            download_historical_data(symbols, final_table_end.strftime('%Y-%m-%d'), current_date.strftime('%Y-%m-%d'),
-                                     frequency=frequency)
+            updated_data = download_historical_data(symbols, final_table_end.strftime('%Y-%m-%d'),
+                                                    current_date.strftime('%Y-%m-%d'),
+                                                    frequency, save_database, database_name)
             # Update technical indicators
-            technical_indicators.update_indicators(symbols)
+            if 'test' not in database_name:
+                technical_indicators.update_indicators(symbols, database_name)
 
     elif isinstance(symbols, list) or isinstance(symbols, np.ndarray):
         # Variable to determine the start date for update
@@ -576,7 +601,7 @@ def update_historical_data(symbols: Union[str, List[str], np.ndarray], frequency
         symbols_to_update: list[str] = []
         for symbol in symbols:
             try:
-                final_table_end = define_update_range(symbol, frequency)
+                final_table_end = define_update_range(symbol, frequency, database_name)
             # Except whether wrong frequency was given
             except TypeError:
                 # Assign further variables to empty string
@@ -594,26 +619,33 @@ def update_historical_data(symbols: Union[str, List[str], np.ndarray], frequency
             print('Nothing to update, table is up-to-date')
         else:
             # Download data from the new date range and save into symbol table
-            download_historical_data(symbols_to_update, latest_end_date.strftime('%Y-%m-%d'),
-                                     current_date.strftime('%Y-%m-%d'), frequency=frequency)
+            updated_data = download_historical_data(symbols_to_update, latest_end_date.strftime('%Y-%m-%d'),
+                                                    current_date.strftime('%Y-%m-%d'),
+                                                    frequency, save_database, database_name)
             # Update technical indicators
-            technical_indicators.update_indicators(symbols_to_update)
+            if 'test' not in database_name:
+                technical_indicators.update_indicators(symbols_to_update, database_name)
 
     # Create a database backup
-    backup_database()
+    if 'test' not in database_name:
+        backup_database()
+
+    return updated_data
 
 
-def fetch_from_database(symbol: str, frequency: str, connection: Union[sqlite3.Connection, None] = None) -> None:
+def fetch_from_database(symbol: str, frequency: str, connection: Union[sqlite3.Connection, None] = None,
+                        database_name: str = 'stock_database.db') -> None:
     """
     Fetch and display data from the database symbol table
     :param connection: Connection to the database.
     :param symbol: Stock symbol, accepts a single symbol or a list of symbols
     :param frequency: String specifying the frequency of the data, defaults-1d, possible values: [1d, 1wk, 1mo]
+    :param database_name: Name of the database where data will be saved. Default "stock_database"
     """
     if connection is None:
         connection = sqlite3.connect(f'{Path(config.DATA_DICT, "stock_database.db")}')
     try:
-        table_name: str = get_name_of_symbol_table(symbol, frequency, connection)
+        table_name: str = get_name_of_symbol_table(symbol, frequency, connection, database_name)
         sort_query: str = f'SELECT * FROM `{table_name}` ORDER BY Date DESC'
         cursor = connection.execute(sort_query)
         results = cursor.fetchall()
@@ -631,44 +663,20 @@ if __name__ == '__main__':
     current_day = datetime.now().date()
     # Database tests
     # reset_database()
-    download_historical_data(['TSLA', 'NVDA'], start='1990-08-01', end='2023-04-01', frequency='1mo')
-    # download_historical_data(['TSLA', 'NVDA'], start='2021-12-20', end='2023-01-01', frequency='1d')
-    # download_historical_data(['TSLA', 'NVDA'], start='2021-12-20', end='2023-01-07', frequency='1d')
+    download_historical_data(['TSLA', 'NVDA'], start='2021-12-20', end='2023-01-07', frequency='1d',
+                             save_database=False)
 
     # Oldest data tests
-    # download_historical_data(['TSLA'], start='2000-12-20', end='2023-08-02', frequency='1d')
-    # download_historical_data(['TSLA'], start='2009-12-20', end='2023-08-04', frequency='1d')
-    # download_historical_data(['TSLA'], start='2009-12-20', end='2023-07-04', frequency='1d')
-    # download_historical_data(['TSLA'], start='2012-12-20', end='2023-07-04', frequency='1d')
-    # download_historical_data(['TSLA'], start='2012-12-20', end='2023-08-05', frequency='1d')
-
-    # Test for not existing stock symbol
-    # download_historical_data(['XYZ'], start='2020-12-20', end='2023-08-05', frequency='1d')
+    # Test and update for not existing stock symbol
     # update_historical_data('XYZ', '1d')
 
-    # download_historical_data(['TSLA'], start='2020-01-01', end='2023-08-01', frequency='1d')
-    # download_historical_data(['TSLA'], start='2009-12-20', end='2023-08-02', frequency='1mo')
-    # fetch_from_database('TSLA', '1d')
-
-    # update_historical_data('TSLA', '1d')
-    # update_historical_data('TSLA', '1mo')
+    # Update data for stocks list
     # update_historical_data(['TSLA', 'NVDA'], '1d')
-
-    # update_historical_data('AAPL', '1d')
-    # display_database_tables()
-
-    # download_historical_data(['XYZ'], start='2009-12-20', end='2023-08-02', frequency='1d')
-
-    # conn = sqlite3.connect(f'{Path(config.DATA_DICT, "stock_database.db")}')
-    # database_table_name = get_name_of_symbol_table('NVDA', '1d', conn)
-    # # delete_duplicates(conn, database_table_name)
-    # print(database_table_name)
-    # conn.close()
 
     # Tests for stock_symbols file
     # reset_database()
-    df = pd.read_csv(Path(config.DATA_DICT, 'stock_symbols.csv'), header=None)
-    stock_symbols = df[0].values
+    # df = pd.read_csv(Path(config.DATA_DICT, 'stock_symbols.csv'), header=None)
+    # stock_symbols = df[0].values
 
     # Freezing page test
     # download_historical_data(symbols=stock_symbols, start='2022-01-01', end=str(current_day))

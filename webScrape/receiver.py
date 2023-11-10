@@ -54,7 +54,8 @@ def receiver(connection: sqlite3.Connection, symbol_table_name: str, start_date:
 
 def receive_data(symbol: str, start: str = '1980-01-01',
                  end: str = datetime.strftime(datetime.now().date(), '%Y-%m-%d'),
-                 frequency: str = '1d', change_index: bool = False) -> pd.DataFrame:
+                 frequency: str = '1d', change_index: bool = False,
+                 database_name: str = 'stock_database.db') -> pd.DataFrame:
     """
     Return data from a date range from a specific stock symbol
     :param symbol: Stock market symbol
@@ -62,6 +63,7 @@ def receive_data(symbol: str, start: str = '1980-01-01',
     :param end: End of the period of time, valid format: "2021-08-08"
     :param frequency: String defining the frequency of the data, defaults-1d, possible values: [1d, 1wk, 1mo]
     :param change_index: Whether to set date as indices in data
+    :param database_name: Name of the database where data will be saved. Default "stock_database"
     :return: Pandas DataFrame with stock data from a date range
     """
     # Convert passed start and end dates into datetime.date format
@@ -69,12 +71,12 @@ def receive_data(symbol: str, start: str = '1980-01-01',
     end_date: datetime.date = datetime.strptime(end, '%Y-%m-%d').date()
 
     # Connect to the database
-    conn = sqlite3.connect(f'{Path(config.DATA_DICT, "stock_database.db")}')
+    conn = sqlite3.connect(f'{Path(config.DATA_DICT, database_name)}')
     # Get the name of the symbol table
     symbol_table_name: str = app.get_name_of_symbol_table(symbol, frequency, conn)
     if symbol_table_name is not None:
         # Check whether the receiver date range is covered by existing data
-        table_start, table_end = app.extract_date_from_file(symbol_table_name)
+        table_start, table_end = app.extract_date_from_table(symbol_table_name)
         if (start_date < table_start and symbol_table_name.split('_')[2] != 'oldest') or end_date > table_end:
             app.download_historical_data(symbol, start, end, frequency)
             # Update table name
