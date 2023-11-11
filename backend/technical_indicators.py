@@ -22,10 +22,10 @@ def append_to_table(symbol: str, data: pd.DataFrame) -> None:
     conn.close()
 
 
-def calculate_RSI(symbol: str, window: int = 14, adjust: bool = False, append: bool = True, data: pd.DataFrame = None) \
-        -> pd.DataFrame:
+def calculate_RSI(symbol: str, window: int = 14, adjust: bool = False, append: bool = True,
+                  data: pd.DataFrame = None) -> pd.DataFrame:
     """
-    Calculate Relative Strength Index (RSI) values for given data=
+    Calculate Relative Strength Index (RSI) values for given data
     :param symbol: Stock market symbol
     :param window: The number of periods over which the RSI calculation should be performed
     :param adjust: Bool value passed to 'ewm' method
@@ -111,7 +111,7 @@ def calculate_EMA(symbol: str, period: int = 10, append: bool = True, data: pd.D
     :param symbol: Stock market symbol
     :param period: The number of periods over which the EMA calculation is performed
     :param append: Determine whether return data or append to the database table
-        :param data: DataFrame with stock symbol data. Default None
+    :param data: DataFrame with stock symbol data. Default None
     :return: Pandas DataFrame with data and extra EMA column
     """
     # Fetch the data from the database and reverse for EMA calculation

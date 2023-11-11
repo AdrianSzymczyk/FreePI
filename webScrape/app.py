@@ -6,7 +6,10 @@ import time
 import shutil
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from typing import List, Union, Tuple
+from typing import List, Tuple, Union
+
+from pandas import DataFrame
+
 from config import config
 from config.config import logger
 import numpy as np
@@ -99,7 +102,7 @@ def extract_date_from_table(table: str) -> (datetime.date, datetime.date):
     return table_start, table_end
 
 
-def get_name_of_symbol_table(symbol: str, frequency: str, connection: Union[None, sqlite3.Connection] = None,
+def get_name_of_symbol_table(symbol: str, frequency: str, connection: None | sqlite3.Connection = None,
                              database_name: str = 'stock_database.db') -> str:
     """
     Get the name of the stock symbol table from the database
@@ -124,10 +127,10 @@ def get_name_of_symbol_table(symbol: str, frequency: str, connection: Union[None
         pass
 
 
-def date_and_freq_check(symbol: str, input_start_date: datetime, input_end_date: datetime,
-                        frequency: str, connection: Union[sqlite3.Connection, None] = None,
+def date_and_freq_check(symbol: str, input_start_date: datetime.date, input_end_date: datetime.date,
+                        frequency: str, connection: sqlite3.Connection | None = None,
                         database_name: str = 'stock_database.db') \
-        -> Union[bool, Tuple[bool, datetime.date, str]]:
+        -> bool | Tuple[bool, datetime.date, str]:
     """
     Check whether the given date range is covered by existing files.
     :param symbol: Stock market symbol
@@ -168,7 +171,7 @@ def date_and_freq_check(symbol: str, input_start_date: datetime, input_end_date:
 
 # TODO: think about the asynchronous symbol handling and saving into the database
 def symbol_handler(driver: webdriver, symbol: str, start_date: datetime, end_date: datetime,
-                   frequency: str, database_name: str = 'stock_database.db') -> Union[pd.DataFrame, str]:
+                   frequency: str, database_name: str = 'stock_database.db') -> pd.DataFrame | str | None:
     """
     Support method for download_historical_data method and list of symbols
     :param driver: Webdriver for remote control and browsing the webpage
@@ -314,7 +317,7 @@ def symbol_handler(driver: webdriver, symbol: str, start_date: datetime, end_dat
                 new_column_list.append(column_name)
         separated_data[0] = new_column_list
         # Concatenate date elements into one element
-        stock_data: List[str] = []
+        stock_data: List = []
         for i in range(1, len(separated_data)):
             date: str = ' '.join(separated_data[i][:3])
             converted_date: datetime.date = datetime.strftime(datetime.strptime(date, '%b %d, %Y').date(), '%Y-%m-%d')
@@ -448,8 +451,8 @@ def save_into_database(connection: sqlite3.Connection, data: pd.DataFrame, symbo
     delete_duplicates(connection, table_name)
 
 
-def download_historical_data(symbols: Union[str, List[str], np.ndarray], start: str, end: str, frequency: str = '1d',
-                             save_database: bool = True, database_name: str = 'stock_database.db') -> pd.DataFrame:
+def download_historical_data(symbols: str | List[str] | np.ndarray, start: str, end: str, frequency: str = '1d',
+                             save_database: bool = True, database_name: str = 'stock_database.db') -> DataFrame | None:
     """
     Fetch stock market data from the yahoo finance over a given period.
     :param symbols: Stock symbol, accepts a single symbol or a list of symbols
@@ -566,8 +569,8 @@ def define_update_range(symbol: str, frequency: str, database_name: str = 'stock
 
 
 @timer
-def update_historical_data(symbols: Union[str, List[str], np.ndarray], frequency: str, save_database: bool = True,
-                           database_name: str = 'stock_database.db') -> pd.DataFrame:
+def update_historical_data(symbols: str | List[str] | np.ndarray, frequency: str, save_database: bool = True,
+                           database_name: str = 'stock_database.db') -> pd.DataFrame | None:
     """
     Update files with latest stock market data
     :param symbols: Stock symbol, accepts a single symbol or a list of symbols
@@ -633,7 +636,7 @@ def update_historical_data(symbols: Union[str, List[str], np.ndarray], frequency
     return updated_data
 
 
-def fetch_from_database(symbol: str, frequency: str, connection: Union[sqlite3.Connection, None] = None,
+def fetch_from_database(symbol: str, frequency: str, connection: sqlite3.Connection | None = None,
                         database_name: str = 'stock_database.db') -> None:
     """
     Fetch and display data from the database symbol table
@@ -666,17 +669,9 @@ if __name__ == '__main__':
     download_historical_data(['TSLA', 'NVDA'], start='2021-12-20', end='2023-01-07', frequency='1d',
                              save_database=False)
 
-    # Oldest data tests
-    # Test and update for not existing stock symbol
-    # update_historical_data('XYZ', '1d')
-
-    # Update data for stocks list
-    # update_historical_data(['TSLA', 'NVDA'], '1d')
-
     # Tests for stock_symbols file
     # reset_database()
-    # df = pd.read_csv(Path(config.DATA_DICT, 'stock_symbols.csv'), header=None)
-    # stock_symbols = df[0].values
+    stock_symbols = pd.read_csv(Path(config.DATA_DICT, 'stock_symbols.csv'), header=None)[0].values
 
     # Freezing page test
     # download_historical_data(symbols=stock_symbols, start='2022-01-01', end=str(current_day))
@@ -684,7 +679,3 @@ if __name__ == '__main__':
     # download_historical_data(symbols=stock_symbols, start='1980-01-01', end='2023-08-04')
     # update_historical_data(stock_symbols, '1d')
     # display_database_tables()
-
-    # download_historical_data('RIOT', start='1980-01-01', end='2023-08-03')
-
-    # download_historical_data('AFRM', '1980-01-01', '2023-08-03')

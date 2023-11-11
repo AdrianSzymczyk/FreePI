@@ -5,6 +5,8 @@ import pytest
 from webScrape import app
 import datetime
 import test_db
+from pathlib import Path
+from config import config
 
 
 @pytest.fixture(scope='module')
@@ -21,10 +23,6 @@ def data():
         }
     )
     return df
-
-
-# def test_file_date():
-#
 
 
 def date_safe_range(date, frequency):
@@ -137,3 +135,13 @@ def test_extract_date():
     table_start, table_end = app.extract_date_from_table(table_name)
     assert table_start == datetime.date(2020, 8, 1)
     assert table_end == datetime.date(2023, 3, 1)
+
+
+@pytest.mark.csvfile
+def test_download_csv_list():
+    current_day: datetime.date = datetime.datetime.now().date()
+    stock_symbols = pd.read_csv(Path(config.DATA_DICT, 'test_symbols.csv'), header=None)[0].values
+    data: pd.DataFrame = app.download_historical_data(symbols=stock_symbols, start='2022-01-01', end=str(current_day),
+                                                      database_name='test_database.db')
+
+    print(data)
