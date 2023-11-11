@@ -1,5 +1,7 @@
 import sqlite3
 from typing import List
+
+import numpy as np
 import pandas as pd
 import pytest
 from webScrape import app
@@ -138,10 +140,15 @@ def test_extract_date():
 
 
 @pytest.mark.csvfile
+@pytest.mark.scraper
 def test_download_csv_list():
+    test_db.delete_db()
     current_day: datetime.date = datetime.datetime.now().date()
     stock_symbols = pd.read_csv(Path(config.DATA_DICT, 'test_symbols.csv'), header=None)[0].values
-    data: pd.DataFrame = app.download_historical_data(symbols=stock_symbols, start='2022-01-01', end=str(current_day),
-                                                      database_name='test_database.db')
+    data: pd.DataFrame = app.download_historical_data(symbols=stock_symbols, start='2023-01-01', end=str(current_day),
+                                                      database_name='test_database.db', save_database=False)
 
-    print(data)
+    companies: np.ndarray = data['Company'].unique()
+    result = set(stock_symbols).intersection(companies)
+    assert set(stock_symbols) == result
+

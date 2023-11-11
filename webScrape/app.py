@@ -663,19 +663,9 @@ def fetch_from_database(symbol: str, frequency: str, connection: sqlite3.Connect
 
 if __name__ == '__main__':
     pass
-    current_day = datetime.now().date()
-    # Database tests
-    # reset_database()
-    download_historical_data(['TSLA', 'NVDA'], start='2021-12-20', end='2023-01-07', frequency='1d',
-                             save_database=False)
-
     # Tests for stock_symbols file
     # reset_database()
     stock_symbols = pd.read_csv(Path(config.DATA_DICT, 'stock_symbols.csv'), header=None)[0].values
-
-    # Freezing page test
-    # download_historical_data(symbols=stock_symbols, start='2022-01-01', end=str(current_day))
-
     # download_historical_data(symbols=stock_symbols, start='1980-01-01', end='2023-08-04')
     # update_historical_data(stock_symbols, '1d')
     # display_database_tables()
