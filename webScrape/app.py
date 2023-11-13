@@ -33,23 +33,16 @@ def setup_webdriver() -> webdriver:
     """
     # Setup options for Chrome browser
     chrome_options = webdriver.ChromeOptions()
-    # chrome_options.add_extension(Path(config.EXTENSIONS_DICT, 'u_block_extension.crx'))
-    chrome_options.add_experimental_option('detach', True)
-    chrome_options.add_argument(
-        'user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) '
-        'Chrome/115.0.0.0 Safari/537.36')
+
     # Adding argument to disable the AutomationControlled flag
     chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+
+    # Running in Headless Mode (Do not display browser)
+    # chrome_options.add_argument('--headless')
 
     # Exclude the collection of enable-logging switches
     chrome_options.add_argument("--ignore-certificate-errors")
     chrome_options.add_experimental_option('excludeSwitches', ['enable-logging'])
-
-    base_path = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-    chromedriver_path = os.path.join(base_path, 'extensions', 'chromedriver.exe')
-    # Setup version of the chromedriver
-    chrome_service = webdriver.ChromeService(executable_path=chromedriver_path,
-                                             service_args=['--log-level=OFF', '--disable-build-check'])
 
     # Turn-off userAutomationExtension
     chrome_options.add_experimental_option("useAutomationExtension", False)

@@ -77,14 +77,14 @@ def test_download_symbol_data(data_directory, symbol, date_range, frequency, db_
     stock_data: pd.DataFrame = app.download_historical_data(symbol, start_date, end_date, frequency,
                                                             save_database=db_save, database_name=f'{data_directory}/test_database.db')
     if stock_data is not None:
-        last_date = datetime.datetime.strptime(stock_data['Date'].iloc[0], '%Y-%m-%d')
-        first_date = datetime.datetime.strptime(stock_data['Date'].iloc[-1], '%Y-%m-%d')
-        start_date = datetime.datetime.strptime(start_date, '%Y-%m-%d')
-        end_date = datetime.datetime.strptime(end_date, '%Y-%m-%d')
+        last_date = datetime.datetime.strptime(stock_data['Date'].iloc[0], '%Y-%m-%d').date()
+        first_date = datetime.datetime.strptime(stock_data['Date'].iloc[-1], '%Y-%m-%d').date()
+        start_date = datetime.datetime.strptime(start_date, '%Y-%m-%d').date()
+        end_date = datetime.datetime.strptime(end_date, '%Y-%m-%d').date()
         if 'begin' in extra_info:
-            end_date = datetime.datetime.strptime(extra_info.split('_')[1], '%Y-%m-%d')
+            end_date = datetime.datetime.strptime(extra_info.split('_')[1], '%Y-%m-%d').date()
         elif 'end' in extra_info:
-            start_date = datetime.datetime.strptime(extra_info.split('_')[1], '%Y-%m-%d')
+            start_date = datetime.datetime.strptime(extra_info.split('_')[1], '%Y-%m-%d').date()
         start_date_limit = date_safe_range(start_date, frequency)
         end_date_limit = date_safe_range(end_date, frequency)
 
@@ -114,7 +114,7 @@ def test_update_data(data_directory, symbol, frequency, db_save, extra_info):
     """
     Test updating data already exists and new one.
     """
-    current_day: datetime.date = datetime.datetime.now()
+    current_day: datetime.date = datetime.datetime.now().date()
     start_date_limit: List[datetime.date] = []
     last_date: datetime.date = datetime.datetime.now()
 
@@ -122,7 +122,7 @@ def test_update_data(data_directory, symbol, frequency, db_save, extra_info):
                                                           database_name=f'{data_directory}/test_database.db')
 
     if stock_data is not None:
-        last_date = datetime.datetime.strptime(stock_data['Date'].iloc[0], '%Y-%m-%d')
+        last_date = datetime.datetime.strptime(stock_data['Date'].iloc[0], '%Y-%m-%d').date()
         start_date_limit = date_safe_range(current_day, frequency)
 
     assert extra_info in ['incorrect'] or start_date_limit[0] <= last_date <= start_date_limit[1]
