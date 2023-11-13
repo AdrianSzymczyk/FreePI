@@ -27,11 +27,15 @@ def data():
 
 @pytest.fixture
 def data_directory():
+    """Return data absolute path."""
     DEFAULT_DICT = Path(__file__).parent.parent.parent.absolute()
     return DEFAULT_DICT / 'data'
 
 
-def date_safe_range(date, frequency):
+def date_safe_range(date: datetime.date, frequency: str) -> List[datetime.date]:
+    """
+    Return safe range for given date.
+    """
     date_scope: List[datetime.date] = []
     if frequency == '1wk':
         date_scope.append(date - datetime.timedelta(days=7))
@@ -42,7 +46,6 @@ def date_safe_range(date, frequency):
     else:
         date_scope.append(date - datetime.timedelta(days=4))
         date_scope.append(date + datetime.timedelta(days=4))
-
     return date_scope
 
 
@@ -62,9 +65,7 @@ def date_safe_range(date, frequency):
 @pytest.mark.download
 def test_download_symbol_data(data_directory, symbol, date_range, frequency, db_save, extra_info):
     """
-    To check whether the data was downloaded correctly I can check whether the data from the begging and the end range
-    are in the database
-    :return:
+    Test downloading data and saving into test database.
     """
     start_date: str = date_range.split('_')[0]
     end_date: str = date_range.split('_')[1]
@@ -110,6 +111,9 @@ def test_download_symbol_data(data_directory, symbol, date_range, frequency, db_
 @pytest.mark.scraper
 @pytest.mark.update
 def test_update_data(data_directory, symbol, frequency, db_save, extra_info):
+    """
+    Test updating data already exists and new one.
+    """
     current_day: datetime.date = datetime.datetime.now()
     start_date_limit: List[datetime.date] = []
     last_date: datetime.date = datetime.datetime.now()
@@ -126,6 +130,9 @@ def test_update_data(data_directory, symbol, frequency, db_save, extra_info):
 
 @pytest.mark.scraper
 def test_date_check(data_directory, data):
+    """
+    Test method responsible for checking data and frequency.
+    """
     conn = sqlite3.connect(Path(data_directory, 'test_database.db'))
     database_names: List[str] = ['stock_TSLA_2020-08-01-2023-03-01&freq=1d',
                                  'stock_NVDA_2022-05-01-2023-05-01&freq=1d']
@@ -141,6 +148,9 @@ def test_date_check(data_directory, data):
 
 @pytest.mark.scraper
 def test_extract_date():
+    """
+    Test method for extracting date from the table name.
+    """
     table_name: str = 'stock_TSLA_2020-08-01-2023-03-01&freq=1d'
     table_start, table_end = app.extract_date_from_table(table_name)
     assert table_start == datetime.date(2020, 8, 1)
@@ -150,6 +160,9 @@ def test_extract_date():
 @pytest.mark.csvfile
 @pytest.mark.scraper
 def test_download_csv_list(data_directory):
+    """
+    Test downloading data from the csv file with stock symbols.
+    """
     current_day: datetime.date = datetime.datetime.now().date()
     stock_symbols = pd.read_csv(Path(data_directory, 'test_symbols.csv'), header=None)[0].values
     data: pd.DataFrame = app.download_historical_data(symbols=stock_symbols, start='2023-05-01', end=str(current_day),
