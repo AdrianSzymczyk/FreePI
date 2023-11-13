@@ -33,6 +33,10 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
+
+      - name: Removing previous chrome instances on runner
+        run: sudo apt purge google-chrome-stable
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
@@ -41,9 +45,6 @@ jobs:
       - name: Install xvfb
         run: sudo apt-get install xvfb
 
-
-      - name: Install Chrome
-        uses: browser-actions/setup-chrome@latest
 
       - name: Print ChromeDriver and Chrome versions
         run: |

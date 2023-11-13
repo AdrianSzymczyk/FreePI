@@ -2,7 +2,6 @@ import functools
 import os
 import logging
 import sqlite3
-import subprocess
 import time
 import shutil
 from datetime import datetime, timezone, timedelta
@@ -22,8 +21,8 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.wait import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 import selenium.common.exceptions
-from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
+
+import chromedriver_autoinstaller
 
 
 def setup_webdriver() -> webdriver:
@@ -31,6 +30,10 @@ def setup_webdriver() -> webdriver:
     Create and configure webdriver options and add extensions.
     :return: Webdriver for remote access to browser
     """
+
+    chromedriver_autoinstaller.install()    # Check if the current version of chromedriver exists
+                                            # and if it doesn't exist, download it automatically,
+                                            # then add chromedriver to path
     # Setup options for Chrome browser
     chrome_options = webdriver.ChromeOptions()
 
@@ -48,16 +51,11 @@ def setup_webdriver() -> webdriver:
     chrome_options.add_experimental_option("useAutomationExtension", False)
     try:
         os.environ['WDM_LOG'] = str(logging.NOTSET)
-        chr_driver = webdriver.Chrome(options=chrome_options,
-                                      service=Service(ChromeDriverManager().install())
-                                      # service=chrome_service
-                                      )
+        driver = webdriver.Chrome(options=chrome_options)
     except selenium.common.exceptions.NoSuchDriverException:
-        service = webdriver.ChromeService(service_args=['--log-level=OFF', '--disable-build-check'],
-                                          log_output=subprocess.STDOUT)
-        chr_driver = webdriver.Chrome(service=service, options=chrome_options)
-    chr_driver.set_page_load_timeout(10)
-    return chr_driver
+        driver = webdriver.Chrome()
+    driver.set_page_load_timeout(10)
+    return driver
 
 
 def initial_driver_run(driver: webdriver,
