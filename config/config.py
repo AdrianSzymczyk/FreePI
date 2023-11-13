@@ -6,7 +6,7 @@ from rich.logging import RichHandler
 
 # Dictionaries
 DEFAULT_DICT = Path(__file__).parent.parent.absolute()
-DATA_DICT = Path(DEFAULT_DICT, 'data')
+DATA_DICT = DEFAULT_DICT / 'data'
 EXTENSIONS_DICT = Path(DEFAULT_DICT, 'extensions')
 LOGS_DIR = Path(DEFAULT_DICT, 'logs')
 

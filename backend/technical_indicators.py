@@ -22,18 +22,20 @@ def append_to_table(symbol: str, data: pd.DataFrame) -> None:
     conn.close()
 
 
-def calculate_RSI(symbol: str, window: int = 14, adjust: bool = False, append: bool = True) \
-        -> pd.DataFrame:
+def calculate_RSI(symbol: str, window: int = 14, adjust: bool = False, append: bool = True,
+                  data: pd.DataFrame = None) -> pd.DataFrame:
     """
     Calculate Relative Strength Index (RSI) values for given data
     :param symbol: Stock market symbol
     :param window: The number of periods over which the RSI calculation should be performed
     :param adjust: Bool value passed to 'ewm' method
     :param append: Determine whether return data or append to the database table
+    :param data: DataFrame with stock symbol data. Default None
     :return: Pandas DataFrame with data and extra RSI column
     """
     # Fetch the data from the database and reverse for RSI calculation
-    data: pd.DataFrame = receiver.receive_data(symbol)[::-1]
+    if data is None:
+        data: pd.DataFrame = receiver.receive_data(symbol)[::-1]
     delta = data['Close'].diff(1).dropna()
     loss = delta.copy()
     gains = delta.copy()
@@ -63,7 +65,7 @@ def calculate_RSI(symbol: str, window: int = 14, adjust: bool = False, append: b
 
 
 def calculate_MACD(symbol: str, fast_period: int = 12, slow_period: int = 26, signal_period: int = 9,
-                   append=True) -> pd.DataFrame:
+                   append=True, data: pd.DataFrame = None) -> pd.DataFrame:
     """
     Calculate Moving Average Convergence Divergence (MACD) values for given data
     :param symbol: Stock market symbol
@@ -71,10 +73,12 @@ def calculate_MACD(symbol: str, fast_period: int = 12, slow_period: int = 26, si
     :param slow_period: The number of periods for the long-term
     :param signal_period: The number of periods for the Signal Line
     :param append: Determine whether return data or append to the database table
+    :param data: DataFrame with stock symbol data. Default None
     :return: Pandas DataFrame with data and extra MACD columns
     """
     # Fetch the data from the database and reverse for MACD calculation
-    data: pd.DataFrame = receiver.receive_data(symbol)
+    if data is None:
+        data: pd.DataFrame = receiver.receive_data(symbol)
     # Calculate the Short-term EMA (fast EMA)
     short_ema = data['Close'].ewm(span=fast_period, adjust=False).mean()
     # Calculate the Long-term EMA (slow EMA)
@@ -101,16 +105,18 @@ def calculate_MACD(symbol: str, fast_period: int = 12, slow_period: int = 26, si
         return data
 
 
-def calculate_EMA(symbol: str, period: int = 10, append: bool = True) -> pd.DataFrame:
+def calculate_EMA(symbol: str, period: int = 10, append: bool = True, data: pd.DataFrame = None) -> pd.DataFrame:
     """
     Calculate Exponential Moving Average Indicator (EMA) values for given data
     :param symbol: Stock market symbol
     :param period: The number of periods over which the EMA calculation is performed
     :param append: Determine whether return data or append to the database table
+    :param data: DataFrame with stock symbol data. Default None
     :return: Pandas DataFrame with data and extra EMA column
     """
     # Fetch the data from the database and reverse for EMA calculation
-    data: pd.DataFrame = receiver.receive_data(symbol)
+    if data is None:
+        data: pd.DataFrame = receiver.receive_data(symbol)
     # Calculate Exponential Moving Average Indicator
     ema = data['Close'].ewm(span=period, adjust=False).mean()
     data[f'EMA_{period}'] = round(ema, 2)
@@ -126,17 +132,19 @@ def calculate_EMA(symbol: str, period: int = 10, append: bool = True) -> pd.Data
         return data
 
 
-def calculate_SMA(symbol: str, period: int = 14, append: bool = True) -> pd.DataFrame:
+def calculate_SMA(symbol: str, period: int = 14, append: bool = True, data: pd.DataFrame = None) -> pd.DataFrame:
     """
     Calculate Simple Moving Average Indicator (SMA) values for given data
     :param symbol: Stock market symbol
     :param symbol: Stock market symbol
     :param period: The number of periods over which the SMA calculation is performed
     :param append: Determine whether return data or append to the database table
+    :param data: DataFrame with stock symbol data. Default None
     :return: Pandas DataFrame with data and extra SMA column
     """
     # Fetch the data from the database and reverse for SMA calculation
-    data: pd.DataFrame = receiver.receive_data(symbol)
+    if data is None:
+        data: pd.DataFrame = receiver.receive_data(symbol)
     # Calculate Simple Moving Average Indicator
     sma = data['Close'].rolling(window=period, min_periods=1).mean()
     data[f'SMA_{period}'] = round(sma, 2)
@@ -254,14 +262,15 @@ def get_indicator(symbol: str, indicator: str, period: int = 14, fast_period: in
             print(f'Given indicator [{indicator}] is not handled for {symbol}!')
 
 
-def update_single_symbol(connection: sqlite3.Connection, symbol: str) -> None:
+def update_single_symbol(connection: sqlite3.Connection, symbol: str, database_name: str = 'stock_database.db') -> None:
     """
     Update the technical indicators for a single stock symbol
     :param connection: Connection to the SQLite database
     :param symbol: Stock market symbol
+    :param database_name: Name of the database where data will be saved. Default "stock_database"
     """
     # Get the name of symbol table
-    table_name = app.get_name_of_symbol_table(symbol, frequency='1d', connection=connection)
+    table_name = app.get_name_of_symbol_table(symbol, '1d', connection, database_name)
     if table_name is not None:
         # Fetch all the table columns
         column_exists = connection.execute(f'PRAGMA table_info(`{table_name}`);')
@@ -269,36 +278,40 @@ def update_single_symbol(connection: sqlite3.Connection, symbol: str) -> None:
         # Create a lists with all the SMA, EMA periods
         ema_periods = [ema for ema in table_columns if 'EMA' in ema]
         sma_periods = [sma for sma in table_columns if 'SMA' in sma]
+
+        # Receive data for calculating indicators
+        data: pd.DataFrame = receiver.receive_data(symbol, database_name=database_name)
         # Execute all the indicator methods
-        calculate_RSI(symbol)  # Calculate RSI
-        calculate_MACD(symbol)  # Calculate MACD
+        calculate_RSI(symbol, data=data)  # Calculate RSI
+        calculate_MACD(symbol, data=data)  # Calculate MACD
         if len(ema_periods) != 0:  # Calculate all the EMA's
             for ema in ema_periods:
-                calculate_EMA(symbol, int(ema.split('_')[1]))
+                calculate_EMA(symbol, int(ema.split('_')[1]), data=data)
         else:
-            calculate_EMA(symbol)
+            calculate_EMA(symbol, data=data)
 
         if len(sma_periods) != 0:  # Calculate all the SMA's
             for sma in sma_periods:
-                calculate_SMA(symbol, int(sma.split('_')[1]))
+                calculate_SMA(symbol, int(sma.split('_')[1]), data=data)
         else:
-            calculate_SMA(symbol)
+            calculate_SMA(symbol, data=data)
 
 
-def update_indicators(symbols: Union[str, List[str], np.ndarray]) -> None:
+def update_indicators(symbols: Union[str, List[str], np.ndarray], database_name: str = 'stock_database.db') -> None:
     """
     Update the technical indicators for given symbols
     :param symbols: Stock market symbols
+    :param database_name: Name of the database where data will be saved. Default "stock_database"
     """
     # Create connection with the database
-    conn = sqlite3.connect(Path(config.DATA_DICT, 'stock_database.db'))
+    conn = sqlite3.connect(Path(config.DATA_DICT, database_name))
     # Update indicators for the single symbol
     if isinstance(symbols, str):
-        update_single_symbol(conn, symbols)
+        update_single_symbol(conn, symbols, database_name)
     # Update indicators for the list of symbols
     elif isinstance(symbols, list):
         for symbol in symbols:
-            update_single_symbol(conn, symbol)
+            update_single_symbol(conn, symbol, database_name)
     # Close the database connection
     conn.close()
 
