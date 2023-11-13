@@ -46,11 +46,6 @@ jobs:
         run: sudo apt-get install xvfb
 
 
-      - name: Print ChromeDriver and Chrome versions
-        run: |
-          chromedriver --version
-          google-chrome-stable --version
-
       - name: Execute tests
         run: |
           export PYTHONPATH=${PYTHONPATH}:${GITHUB_WORKSPACE}
