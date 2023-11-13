@@ -1,5 +1,6 @@
 import functools
 import os
+import logging
 import sqlite3
 import subprocess
 import time
@@ -7,7 +8,6 @@ import shutil
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import List, Tuple, Union
-
 from pandas import DataFrame
 
 from config import config
@@ -22,6 +22,8 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.wait import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 import selenium.common.exceptions
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
 
 
 def setup_webdriver() -> webdriver:
@@ -39,22 +41,29 @@ def setup_webdriver() -> webdriver:
     # Adding argument to disable the AutomationControlled flag
     chrome_options.add_argument("--disable-blink-features=AutomationControlled")
 
-    # Exclude the collection of enable-automation switches
-    chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    # Exclude the collection of enable-logging switches
+    chrome_options.add_argument("--ignore-certificate-errors")
+    chrome_options.add_experimental_option('excludeSwitches', ['enable-logging'])
 
+    base_path = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    chromedriver_path = os.path.join(base_path, 'extensions', 'chromedriver.exe')
     # Setup version of the chromedriver
-    chrome_service = webdriver.ChromeService(executable_path='../extensions/chromedriver.exe',
-                                             service_args=['--disable-build-check'])
+    chrome_service = webdriver.ChromeService(executable_path=chromedriver_path,
+                                             service_args=['--log-level=OFF', '--disable-build-check'])
 
     # Turn-off userAutomationExtension
     chrome_options.add_experimental_option("useAutomationExtension", False)
     try:
-        chr_driver = webdriver.Chrome(options=chrome_options, service=chrome_service)
+        os.environ['WDM_LOG'] = str(logging.NOTSET)
+        chr_driver = webdriver.Chrome(options=chrome_options,
+                                      service=Service(ChromeDriverManager().install())
+                                      # service=chrome_service
+                                      )
     except selenium.common.exceptions.NoSuchDriverException:
         service = webdriver.ChromeService(service_args=['--log-level=OFF', '--disable-build-check'],
                                           log_output=subprocess.STDOUT)
         chr_driver = webdriver.Chrome(service=service, options=chrome_options)
-    chr_driver.set_page_load_timeout(15)
+    chr_driver.set_page_load_timeout(10)
     return chr_driver
 
 
@@ -70,6 +79,8 @@ def initial_driver_run(driver: webdriver,
     except selenium.common.exceptions.NoSuchElementException:
         # Pass the method when there is no cookie button on the webpage
         pass
+    except selenium.common.exceptions.TimeoutException:
+        driver.refresh()
 
 
 def timer(func):
@@ -114,7 +125,10 @@ def get_name_of_symbol_table(symbol: str, frequency: str, connection: None | sql
     """
 
     if connection is None:
-        connection = sqlite3.connect(f'{Path(config.DATA_DICT, database_name)}')
+        if 'test' in database_name:
+            connection = sqlite3.connect(f'{database_name}')
+        else:
+            connection = sqlite3.connect(f'{Path(config.DATA_DICT, database_name)}')
     find_table_query = (f"SELECT name "
                         f"FROM sqlite_master "
                         f"WHERE type='table' AND name LIKE '%{symbol}%freq={frequency}%';")
@@ -487,7 +501,10 @@ def download_historical_data(symbols: str | List[str] | np.ndarray, start: str, 
     # Set up the driver and accept cookies
     driver = setup_webdriver()
     # Connect to or create the database file
-    conn = sqlite3.connect(f'{Path(config.DATA_DICT, database_name)}')
+    if 'test' in database_name:
+        conn = sqlite3.connect(f'{database_name}')
+    else:
+        conn = sqlite3.connect(f'{Path(config.DATA_DICT, database_name)}')
     # Execute downloading for single symbol
     if isinstance(symbols, str):
         try:
@@ -664,6 +681,7 @@ def fetch_from_database(symbol: str, frequency: str, connection: sqlite3.Connect
 if __name__ == '__main__':
     pass
     # Tests for stock_symbols file
+    download_historical_data('SNAP', start='2023-01-01', end='2023-08-04', save_database=False)
     # reset_database()
     stock_symbols = pd.read_csv(Path(config.DATA_DICT, 'stock_symbols.csv'), header=None)[0].values
     # download_historical_data(symbols=stock_symbols, start='1980-01-01', end='2023-08-04')

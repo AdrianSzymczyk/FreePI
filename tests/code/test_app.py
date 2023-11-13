@@ -1,17 +1,15 @@
+import os
 import sqlite3
 from typing import List
-
 import numpy as np
 import pandas as pd
 import pytest
 from webScrape import app
 import datetime
-import test_db
 from pathlib import Path
-from config import config
 
 
-@pytest.fixture(scope='module')
+@pytest.fixture
 def data():
     df = pd.DataFrame(
         {
@@ -25,6 +23,12 @@ def data():
         }
     )
     return df
+
+
+@pytest.fixture
+def data_directory():
+    DEFAULT_DICT = Path(__file__).parent.parent.parent.absolute()
+    return DEFAULT_DICT / 'data'
 
 
 def date_safe_range(date, frequency):
@@ -51,12 +55,12 @@ def date_safe_range(date, frequency):
         ('AAPL', '2011-05-01_2023-10-05', '1mo', True, 'end_2023-08-22'),
         ('AAPL', '2012-01-01_2023-10-01', '1mo', True, 'inRange'),
         ('AAPL', '2009-05-11_2023-08-31', '1mo', True, 'begin_2010-01-01'),
-        ('XYZ', '2009-05-11_2023-08-31', '1mo', True, 'incorrect')
+        ('XYZ', '2009-05-11_2023-08-31', '1mo', False, 'incorrect')
     ]
 )
 @pytest.mark.scraper
 @pytest.mark.download
-def test_download_symbol_data(symbol, date_range, frequency, db_save, extra_info):
+def test_download_symbol_data(data_directory, symbol, date_range, frequency, db_save, extra_info):
     """
     To check whether the data was downloaded correctly I can check whether the data from the begging and the end range
     are in the database
@@ -70,7 +74,7 @@ def test_download_symbol_data(symbol, date_range, frequency, db_save, extra_info
     end_date_limit: List[datetime.date] = []
 
     stock_data: pd.DataFrame = app.download_historical_data(symbol, start_date, end_date, frequency,
-                                                            save_database=db_save, database_name='test_database.db')
+                                                            save_database=db_save, database_name=f'{data_directory}/test_database.db')
     if stock_data is not None:
         last_date = datetime.datetime.strptime(stock_data['Date'].iloc[0], '%Y-%m-%d')
         first_date = datetime.datetime.strptime(stock_data['Date'].iloc[-1], '%Y-%m-%d')
@@ -88,26 +92,30 @@ def test_download_symbol_data(symbol, date_range, frequency, db_save, extra_info
     assert extra_info in ['inRange', 'incorrect'] or end_date_limit[0] <= last_date <= end_date_limit[1]
 
     if not db_save:
-        test_db.delete_db()
+        try:
+            os.remove(Path(data_directory, 'test_database.db'))
+        except FileNotFoundError:
+            print("Database does not exists!")
 
 
 @pytest.mark.parametrize(
-    'symbol, frequency, extra_info',
+    'symbol, frequency, db_save, extra_info',
     [
-        ('TSLA', '1wk', ''),
-        (['NKLA', 'SNAP'], '1d', ''),
-        ('AAPL', '1mo', ''),
-        ('XYZ', '1d', 'incorrect')
+        ('TSLA', '1wk', False,  ''),
+        (['NKLA', 'SNAP'], '1d', False, ''),
+        ('AAPL', '1mo', False, ''),
+        ('XYZ', '1d', False, 'incorrect')
     ]
 )
 @pytest.mark.scraper
 @pytest.mark.update
-def test_update_data(symbol, frequency, extra_info):
+def test_update_data(data_directory, symbol, frequency, db_save, extra_info):
     current_day: datetime.date = datetime.datetime.now()
     start_date_limit: List[datetime.date] = []
     last_date: datetime.date = datetime.datetime.now()
 
-    stock_data: pd.DataFrame = app.update_historical_data(symbol, frequency, database_name='test_database.db')
+    stock_data: pd.DataFrame = app.update_historical_data(symbol, frequency, save_database=db_save,
+                                                          database_name=f'{data_directory}/test_database.db')
 
     if stock_data is not None:
         last_date = datetime.datetime.strptime(stock_data['Date'].iloc[0], '%Y-%m-%d')
@@ -117,8 +125,8 @@ def test_update_data(symbol, frequency, extra_info):
 
 
 @pytest.mark.scraper
-def test_date_check(data):
-    conn = sqlite3.connect('test_database.db')
+def test_date_check(data_directory, data):
+    conn = sqlite3.connect(Path(data_directory, 'test_database.db'))
     database_names: List[str] = ['stock_TSLA_2020-08-01-2023-03-01&freq=1d',
                                  'stock_NVDA_2022-05-01-2023-05-01&freq=1d']
     for table in database_names:
@@ -141,14 +149,13 @@ def test_extract_date():
 
 @pytest.mark.csvfile
 @pytest.mark.scraper
-def test_download_csv_list():
-    test_db.delete_db()
+def test_download_csv_list(data_directory):
     current_day: datetime.date = datetime.datetime.now().date()
-    stock_symbols = pd.read_csv(Path(config.DATA_DICT, 'test_symbols.csv'), header=None)[0].values
-    data: pd.DataFrame = app.download_historical_data(symbols=stock_symbols, start='2023-01-01', end=str(current_day),
-                                                      database_name='test_database.db', save_database=False)
+    stock_symbols = pd.read_csv(Path(data_directory, 'test_symbols.csv'), header=None)[0].values
+    data: pd.DataFrame = app.download_historical_data(symbols=stock_symbols, start='2023-05-01', end=str(current_day),
+                                                      database_name=f'{data_directory}/test_database.db',
+                                                      save_database=False)
 
     companies: np.ndarray = data['Company'].unique()
     result = set(stock_symbols).intersection(companies)
     assert set(stock_symbols) == result
-

@@ -8,18 +8,30 @@ from config import config
 from pathlib import Path
 
 
-def create_db_connection(database_name: str) -> sqlite3.Connection:
+@pytest.fixture
+def data_directory():
+    DEFAULT_DICT = Path(__file__).parent.parent.parent.absolute()
+    return DEFAULT_DICT / 'data'
+
+
+def create_db_connection(data_directory, database_name: str) -> sqlite3.Connection:
     try:
-        conn = sqlite3.connect(Path(config.DATA_DICT, database_name))
+        conn = sqlite3.connect(Path(data_directory, database_name))
+        # # Define the table schema
+        # create_table_query = f'''
+        #                     CREATE TABLE IF NOT EXISTS {database_name};
+        #                     '''
+        # # Execute the query to create the table
+        # conn.execute(create_table_query)
         return conn
     except sqlite3.Error as e:
         print(e)
         return None
 
 
-def delete_db():
+def delete_db(data_directory):
     try:
-        os.remove(Path(config.DATA_DICT, 'test_database.db'))
+        os.remove(Path(data_directory, 'test_database.db'))
     except FileNotFoundError:
         print("Database does not exists!")
 
@@ -31,8 +43,8 @@ def get_database_data(connection: sqlite3.Connection, table_name: str) -> List:
 
 
 @pytest.mark.database
-def test_db_connect():
-    conn = create_db_connection('test_database.db')
+def test_db_connect(data_directory):
+    conn = create_db_connection(data_directory, 'test_database.db')
     assert isinstance(conn, sqlite3.Connection)
     conn.close()
 
@@ -54,11 +66,11 @@ def data():
 
 
 @pytest.mark.database
-def test_db_df_insert(data):
+def test_db_df_insert(data_directory, data):
     database_name: str = 'test_database'
-    conn = create_db_connection(database_name + '.db')
+    conn = create_db_connection(data_directory, database_name + '.db')
     data.to_sql('test_table', conn, if_exists='append', index=False)
-    result = pd.DataFrame([get_database_data(conn, database_name)[0]], columns=data.columns.values)
+    result = pd.DataFrame([get_database_data(conn, 'test_table')[0]], columns=data.columns.values)
     assert data['Date'][0] == result['Date'][0]
     assert data['Open'][0] == result['Open'][0]
     assert data['High'][0] == result['High'][0]
@@ -70,13 +82,13 @@ def test_db_df_insert(data):
 
 
 @pytest.mark.database
-def test_db_duplicates(data):
+def test_db_duplicates(data_directory, data):
     database_name: str = 'test_database'
-    conn = create_db_connection(database_name + '.db')
+    conn = create_db_connection(data_directory, database_name + '.db')
     for _ in range(2):
         data.to_sql('test_table', conn, if_exists='append', index=False)
-    app.delete_duplicates(conn, database_name)
-    results = get_database_data(conn, database_name)
+    app.delete_duplicates(conn, 'test_table')
+    results = get_database_data(conn, 'test_table')
     assert len(results) == 1
     conn.close()
-    delete_db()
+    delete_db(data_directory)
