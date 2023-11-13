@@ -4,6 +4,8 @@ from typing import List
 import numpy as np
 import pandas as pd
 import pytest
+from pyvirtualdisplay import Display
+
 from webScrape import app
 import datetime
 from pathlib import Path
@@ -67,6 +69,9 @@ def test_download_symbol_data(data_directory, symbol, date_range, frequency, db_
     """
     Test downloading data and saving into test database.
     """
+    display = Display(visible=0, size=(800, 800))
+    display.start()
+
     start_date: str = date_range.split('_')[0]
     end_date: str = date_range.split('_')[1]
     last_date: datetime.date = datetime.datetime.now()
