@@ -41,7 +41,7 @@ def setup_webdriver() -> webdriver:
     chrome_options.add_argument("--disable-blink-features=AutomationControlled")
 
     # Running in Headless Mode (Do not display browser)
-    # chrome_options.add_argument('--headless')
+    chrome_options.add_argument('--headless')
 
     # Exclude the collection of enable-logging switches
     chrome_options.add_argument("--ignore-certificate-errors")
@@ -239,7 +239,7 @@ def symbol_handler(driver: webdriver, symbol: str, start_date: datetime, end_dat
         while not all_data_loaded:
             # Variables to handle freezing webpage and not scrolling down
             endless_loop: bool = False
-            WebDriverWait(driver, 10).until(
+            WebDriverWait(driver, 15).until(
                 EC.presence_of_element_located(
                     (By.XPATH, '//*[@id="Col1-1-HistoricalDataTable-Proxy"]/section/div[2]/table'))
             )
