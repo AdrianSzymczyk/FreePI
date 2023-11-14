@@ -1,5 +1,6 @@
 import os
 import sqlite3
+import time
 from typing import List
 import numpy as np
 import pandas as pd
@@ -54,7 +55,7 @@ def date_safe_range(date: datetime.date, frequency: str) -> List[datetime.date]:
 @pytest.mark.parametrize(
     'symbol, date_range, frequency, db_save, extra_info',
     [
-        (['NKLA', 'SNAP'], '2022-05-12_2023-08-22', '1d', False, ''),
+        (['NKLA', 'SNAP'], '2023-01-12_2023-08-22', '1d', True, ''),
         ('TSLA', '2009-01-01_2023-08-22', '1wk', False, ''),
         ('AAPL', '2010-01-01_2023-08-22', '1mo', True, ''),
         ('AAPL', '2011-05-01_2023-10-05', '1mo', True, 'end_2023-08-22'),
@@ -69,8 +70,12 @@ def test_download_symbol_data(data_directory, symbol, date_range, frequency, db_
     """
     Test downloading data and saving into test database.
     """
-    display = Display(visible=0, size=(800, 800))
-    display.start()
+    # Check if running in GitHub Actions
+    is_github_actions = os.environ.get('GITHUB_ACTIONS') == 'true'
+    if is_github_actions:
+        # Code to be executed only in GitHub Actions workflow
+        display = Display(visible=0, size=(800, 800))
+        display.start()
 
     start_date: str = date_range.split('_')[0]
     end_date: str = date_range.split('_')[1]
@@ -99,6 +104,7 @@ def test_download_symbol_data(data_directory, symbol, date_range, frequency, db_
 
     if not db_save:
         try:
+            time.sleep(1)
             os.remove(Path(data_directory, 'test_database.db'))
         except FileNotFoundError:
             print("Database does not exists!")
