@@ -2,7 +2,6 @@ import functools
 import os
 import logging
 import sqlite3
-import subprocess
 import time
 import shutil
 from datetime import datetime, timezone, timedelta
@@ -22,8 +21,8 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.wait import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 import selenium.common.exceptions
-from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
+
+import chromedriver_autoinstaller
 
 
 def setup_webdriver() -> webdriver:
@@ -31,40 +30,32 @@ def setup_webdriver() -> webdriver:
     Create and configure webdriver options and add extensions.
     :return: Webdriver for remote access to browser
     """
+
+    chromedriver_autoinstaller.install()    # Check if the current version of chromedriver exists
+                                            # and if it doesn't exist, download it automatically,
+                                            # then add chromedriver to path
     # Setup options for Chrome browser
     chrome_options = webdriver.ChromeOptions()
-    # chrome_options.add_extension(Path(config.EXTENSIONS_DICT, 'u_block_extension.crx'))
-    chrome_options.add_experimental_option('detach', True)
-    chrome_options.add_argument(
-        'user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) '
-        'Chrome/115.0.0.0 Safari/537.36')
+
     # Adding argument to disable the AutomationControlled flag
     chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+
+    # Running in Headless Mode (Do not display browser)
+    chrome_options.add_argument('--headless')
 
     # Exclude the collection of enable-logging switches
     chrome_options.add_argument("--ignore-certificate-errors")
     chrome_options.add_experimental_option('excludeSwitches', ['enable-logging'])
 
-    base_path = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-    chromedriver_path = os.path.join(base_path, 'extensions', 'chromedriver.exe')
-    # Setup version of the chromedriver
-    chrome_service = webdriver.ChromeService(executable_path=chromedriver_path,
-                                             service_args=['--log-level=OFF', '--disable-build-check'])
-
     # Turn-off userAutomationExtension
     chrome_options.add_experimental_option("useAutomationExtension", False)
     try:
         os.environ['WDM_LOG'] = str(logging.NOTSET)
-        chr_driver = webdriver.Chrome(options=chrome_options,
-                                      service=Service(ChromeDriverManager().install())
-                                      # service=chrome_service
-                                      )
+        driver = webdriver.Chrome(options=chrome_options)
     except selenium.common.exceptions.NoSuchDriverException:
-        service = webdriver.ChromeService(service_args=['--log-level=OFF', '--disable-build-check'],
-                                          log_output=subprocess.STDOUT)
-        chr_driver = webdriver.Chrome(service=service, options=chrome_options)
-    chr_driver.set_page_load_timeout(10)
-    return chr_driver
+        driver = webdriver.Chrome()
+    driver.set_page_load_timeout(10)
+    return driver
 
 
 def initial_driver_run(driver: webdriver,
@@ -248,7 +239,7 @@ def symbol_handler(driver: webdriver, symbol: str, start_date: datetime, end_dat
         while not all_data_loaded:
             # Variables to handle freezing webpage and not scrolling down
             endless_loop: bool = False
-            WebDriverWait(driver, 10).until(
+            WebDriverWait(driver, 15).until(
                 EC.presence_of_element_located(
                     (By.XPATH, '//*[@id="Col1-1-HistoricalDataTable-Proxy"]/section/div[2]/table'))
             )

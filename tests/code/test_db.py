@@ -1,6 +1,5 @@
 import os
 import sqlite3
-import time
 from typing import List
 import pandas as pd
 import pytest
@@ -13,6 +12,22 @@ def data_directory():
     """Return data absolute path."""
     DEFAULT_DICT = Path(__file__).parent.parent.parent.absolute()
     return DEFAULT_DICT / 'data'
+
+
+@pytest.fixture(scope='module')
+def data():
+    df = pd.DataFrame(
+        {
+            'Date': ['2010-07-01'],
+            'Open': [1.67],
+            'High': [1.73],
+            'Low': [1.0],
+            'Close': [1.33],
+            'Adj Close': [1.33],
+            'Volume': [968637000]
+        }
+    )
+    return df
 
 
 def create_db_connection(data_directory, database_name: str) -> sqlite3.Connection:
@@ -54,22 +69,6 @@ def test_db_connect(data_directory):
     conn = create_db_connection(data_directory, 'test_database.db')
     assert isinstance(conn, sqlite3.Connection)
     conn.close()
-
-
-@pytest.fixture(scope='module')
-def data():
-    df = pd.DataFrame(
-        {
-            'Date': ['2010-07-01'],
-            'Open': [1.67],
-            'High': [1.73],
-            'Low': [1.0],
-            'Close': [1.33],
-            'Adj Close': [1.33],
-            'Volume': [968637000]
-        }
-    )
-    return df
 
 
 @pytest.mark.database
