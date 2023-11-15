@@ -7,26 +7,33 @@ from typing import Union, List
 from webScrape import app, receiver
 
 
-def append_to_table(symbol: str, data: pd.DataFrame) -> None:
+def append_to_table(symbol: str, data: pd.DataFrame, connection: sqlite3.Connection | None = None) -> None:
     """
     Append new columns into stock symbol table
     :param symbol: Stock market symbol
     :param data: Pandas DataFrame with the data to be saved in table
+    :param connection: Connection to the database.
     """
-    conn = sqlite3.connect(Path(config.DATA_DICT, 'stock_database.db'))
-    table_name = app.get_name_of_symbol_table(symbol=symbol, frequency='1d', connection=conn)
+    # Variable responsible for closing database connection
+    single_usage: bool = False
+    if connection is None:
+        single_usage = True
+        connection = sqlite3.connect(Path(config.DATA_DICT, 'stock_database.db'))
+    table_name = app.get_name_of_symbol_table(symbol=symbol, frequency='1d', connection=connection)
     if table_name is not None:
-        data.to_sql(table_name, conn, if_exists='replace', index=False)
+        data.to_sql(table_name, connection, if_exists='replace', index=False)
     else:
         pass
-    conn.close()
+    if single_usage:
+        connection.close()
 
 
-def calculate_RSI(symbol: str, window: int = 14, adjust: bool = False, append: bool = True,
+def calculate_RSI(symbol: str, connection: sqlite3.Connection | None = None, window: int = 14, adjust: bool = False, append: bool = True,
                   data: pd.DataFrame = None) -> pd.DataFrame:
     """
     Calculate Relative Strength Index (RSI) values for given data
     :param symbol: Stock market symbol
+    :param connection: Connection to the database.
     :param window: The number of periods over which the RSI calculation should be performed
     :param adjust: Bool value passed to 'ewm' method
     :param append: Determine whether return data or append to the database table
@@ -54,21 +61,18 @@ def calculate_RSI(symbol: str, window: int = 14, adjust: bool = False, append: b
     data.loc[:, 'RSI'] = round(RSI, 2)
     if append:
         # Append new data to the database table
-        append_to_table(symbol, data[::-1])
-        # Set Date as index in the DataFrame
-        data.set_index('Date', inplace=True)
-        return data[::-1]
-    else:
-        # Set Date as index in the DataFrame
-        data.set_index('Date', inplace=True)
-        return data[::-1]
+        append_to_table(symbol, data[::-1], connection)
+    # Set Date as index in the DataFrame
+    data.set_index('Date')
+    return data[::-1]
 
 
-def calculate_MACD(symbol: str, fast_period: int = 12, slow_period: int = 26, signal_period: int = 9,
+def calculate_MACD(symbol: str, connection: sqlite3.Connection | None = None, fast_period: int = 12, slow_period: int = 26, signal_period: int = 9,
                    append=True, data: pd.DataFrame = None) -> pd.DataFrame:
     """
     Calculate Moving Average Convergence Divergence (MACD) values for given data
     :param symbol: Stock market symbol
+    :param connection: Connection to the database.
     :param fast_period: The number of periods for the short-term
     :param slow_period: The number of periods for the long-term
     :param signal_period: The number of periods for the Signal Line
@@ -95,20 +99,18 @@ def calculate_MACD(symbol: str, fast_period: int = 12, slow_period: int = 26, si
     data['MACD_Hist'] = round(histogram, 2)
     if append:
         # Append new data to the database table
-        append_to_table(symbol, data)
-        # Set Date as index in the DataFrame
-        data.set_index('Date', inplace=True)
-        return data
-    else:
-        # Set Date as index in the DataFrame
-        data.set_index('Date', inplace=True)
-        return data
+        append_to_table(symbol, data[::-1], connection)
+    # Set Date as index in the DataFrame
+    data.set_index('Date')
+    return data[::-1]
 
 
-def calculate_EMA(symbol: str, period: int = 10, append: bool = True, data: pd.DataFrame = None) -> pd.DataFrame:
+def calculate_EMA(symbol: str, connection: sqlite3.Connection | None = None, period: int = 10, append: bool = True,
+                  data: pd.DataFrame = None) -> pd.DataFrame:
     """
     Calculate Exponential Moving Average Indicator (EMA) values for given data
     :param symbol: Stock market symbol
+    :param connection: Connection to the database.
     :param period: The number of periods over which the EMA calculation is performed
     :param append: Determine whether return data or append to the database table
     :param data: DataFrame with stock symbol data. Default None
@@ -122,20 +124,18 @@ def calculate_EMA(symbol: str, period: int = 10, append: bool = True, data: pd.D
     data[f'EMA_{period}'] = round(ema, 2)
     if append:
         # Append new data to the database table
-        append_to_table(symbol, data)
-        # Set Date as index in the DataFrame
-        data.set_index('Date', inplace=True)
-        return data
-    else:
-        # Set Date as index in the DataFrame
-        data.set_index('Date', inplace=True)
-        return data
+        append_to_table(symbol, data[::-1], connection)
+    # Set Date as index in the DataFrame
+    data.set_index('Date')
+    return data[::-1]
 
 
-def calculate_SMA(symbol: str, period: int = 14, append: bool = True, data: pd.DataFrame = None) -> pd.DataFrame:
+def calculate_SMA(symbol: str, connection: sqlite3.Connection | None = None, period: int = 14, append: bool = True,
+                  data: pd.DataFrame = None) -> pd.DataFrame:
     """
     Calculate Simple Moving Average Indicator (SMA) values for given data
     :param symbol: Stock market symbol
+    :param connection: Connection to the database.
     :param symbol: Stock market symbol
     :param period: The number of periods over which the SMA calculation is performed
     :param append: Determine whether return data or append to the database table
@@ -150,14 +150,10 @@ def calculate_SMA(symbol: str, period: int = 14, append: bool = True, data: pd.D
     data[f'SMA_{period}'] = round(sma, 2)
     if append:
         # Append new data to the database table
-        append_to_table(symbol, data)
-        # Set Date as index in the DataFrame
-        data.set_index('Date', inplace=True)
-        return data
-    else:
-        # Set Date as index in the DataFrame
-        data.set_index('Date', inplace=True)
-        return data
+        append_to_table(symbol, data[::-1], connection)
+    # Set Date as index in the DataFrame
+    data.set_index('Date')
+    return data[::-1]
 
 
 def calculate_PSAR(symbol: str, af_start=0.02, af_increment=0.02, af_max=0.2, append=True) -> pd.DataFrame:
@@ -280,21 +276,21 @@ def update_single_symbol(connection: sqlite3.Connection, symbol: str, database_n
         sma_periods = [sma for sma in table_columns if 'SMA' in sma]
 
         # Receive data for calculating indicators
-        data: pd.DataFrame = receiver.receive_data(symbol, database_name=database_name)
+        data: pd.DataFrame = receiver.receive_data(symbol, database_name=database_name)[::-1]
         # Execute all the indicator methods
-        calculate_RSI(symbol, data=data)  # Calculate RSI
-        calculate_MACD(symbol, data=data)  # Calculate MACD
+        calculate_RSI(symbol, connection=connection, data=data)  # Calculate RSI
+        calculate_MACD(symbol, connection=connection, data=data)  # Calculate MACD
         if len(ema_periods) != 0:  # Calculate all the EMA's
             for ema in ema_periods:
                 calculate_EMA(symbol, int(ema.split('_')[1]), data=data)
         else:
-            calculate_EMA(symbol, data=data)
+            calculate_EMA(symbol, connection=connection, data=data)
 
         if len(sma_periods) != 0:  # Calculate all the SMA's
             for sma in sma_periods:
                 calculate_SMA(symbol, int(sma.split('_')[1]), data=data)
         else:
-            calculate_SMA(symbol, data=data)
+            calculate_SMA(symbol, connection=connection, data=data)
 
 
 def update_indicators(symbols: Union[str, List[str], np.ndarray], database_name: str = 'stock_database.db') -> None:

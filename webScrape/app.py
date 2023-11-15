@@ -21,6 +21,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.wait import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 import selenium.common.exceptions
+from selenium.webdriver.remote.webelement import WebElement
 
 import chromedriver_autoinstaller
 
@@ -41,7 +42,7 @@ def setup_webdriver() -> webdriver:
     chrome_options.add_argument("--disable-blink-features=AutomationControlled")
 
     # Running in Headless Mode (Do not display browser)
-    chrome_options.add_argument('--headless')
+    # chrome_options.add_argument('--headless')
 
     # Exclude the collection of enable-logging switches
     chrome_options.add_argument("--ignore-certificate-errors")
@@ -176,7 +177,8 @@ def date_and_freq_check(symbol: str, input_start_date: datetime.date, input_end_
 
 # TODO: think about the asynchronous symbol handling and saving into the database
 def symbol_handler(driver: webdriver, symbol: str, start_date: datetime, end_date: datetime,
-                   frequency: str, database_name: str = 'stock_database.db') -> pd.DataFrame | str | None:
+                   frequency: str, database_name: str = 'stock_database.db',
+                   incorrect_symbols: List[str] = None) -> pd.DataFrame | str | None:
     """
     Support method for download_historical_data method and list of symbols
     :param driver: Webdriver for remote control and browsing the webpage
@@ -185,6 +187,7 @@ def symbol_handler(driver: webdriver, symbol: str, start_date: datetime, end_dat
     :param end_date: End of the period of time
     :param frequency: String specifying the frequency of the data, defaults-1d, possible values: [1d, 1wk, 1mo]
     :param database_name: Name of the database where data will be saved. Default "stock_database"
+    :param incorrect_symbols: Array with incorrect symbols.
     :return: Pandas DataFrame with fetch data from the webpage
     """
     # Upper case symbol
@@ -230,6 +233,7 @@ def symbol_handler(driver: webdriver, symbol: str, start_date: datetime, end_dat
         if f'&frequency={frequency}' not in current_url or driver.title == "Requested symbol wasn't found":
             try:
                 logger.error(f'Incorrect symbol stock "{symbol}", no such stock symbol.')
+                incorrect_symbols.append(symbol)
                 return
             except OSError as e:
                 print('Error: %s - %s.' % (e.filename, e.strerror))
@@ -239,11 +243,13 @@ def symbol_handler(driver: webdriver, symbol: str, start_date: datetime, end_dat
         while not all_data_loaded:
             # Variables to handle freezing webpage and not scrolling down
             endless_loop: bool = False
-            WebDriverWait(driver, 15).until(
-                EC.presence_of_element_located(
-                    (By.XPATH, '//*[@id="Col1-1-HistoricalDataTable-Proxy"]/section/div[2]/table'))
-            )
-
+            try:
+                WebDriverWait(driver, 10).until(
+                    EC.presence_of_element_located(
+                        (By.XPATH, '//*[@id="Col1-1-HistoricalDataTable-Proxy"]/section/div[2]/table'))
+                )
+            except selenium.common.TimeoutException:
+                driver.refresh()
             # Get the initial scroll position
             prev_scroll_position = driver.execute_script("return window.pageYOffset;")
             while True:
@@ -309,53 +315,67 @@ def symbol_handler(driver: webdriver, symbol: str, start_date: datetime, end_dat
         # Get all data from the loaded table
         stock_table = driver.find_element(By.XPATH,
                                           '//*[@id="Col1-1-HistoricalDataTable-Proxy"]/section/div[2]/table')
-        # Merge downloaded data into arrays and format it
-        tmp_arr: np.array = np.array(stock_table.text.split('\n'))
-        separated_data = [re.split(r'\s+(?!Close\*\*)', line) for line in tmp_arr[:-1]
-                          if 'Dividend' not in line if 'Split' not in line]
-        # Remove stars from column names
-        new_column_list: List[str] = []
-        for column_name in separated_data[0]:
-            if '*' in column_name:
-                new_column_list.append(column_name.replace('*', ''))
-            else:
-                new_column_list.append(column_name)
-        separated_data[0] = new_column_list
-        # Concatenate date elements into one element
-        stock_data: List = []
-        for i in range(1, len(separated_data)):
-            date: str = ' '.join(separated_data[i][:3])
-            converted_date: datetime.date = datetime.strftime(datetime.strptime(date, '%b %d, %Y').date(), '%Y-%m-%d')
-            stock_data.append([converted_date] + separated_data[i][3:])
-        final_list = [separated_data[0]] + stock_data
-
-        # Join created arrays into Pandas DataFrame
-        stock_df = pd.DataFrame(final_list[1:], columns=final_list[0])
-
-        # Convert numeric columns to appropriate data type
-        numeric_columns: List[str] = ['Open', 'High', 'Low', 'Close', 'Adj Close']
-        # Remove '-' values with 0
-        try:
-            stock_df[numeric_columns] = stock_df[numeric_columns].astype(float)
-        except ValueError:
-            stock_df = stock_df.replace('-', '0')
-            for column in numeric_columns:
-                stock_df[column] = stock_df[column].str.replace(',', '')
-            stock_df[numeric_columns] = stock_df[numeric_columns].astype(float)
-
-        # Remove commas from "Volume" column and convert to integer
-        try:
-            stock_df['Volume'] = stock_df['Volume'].str.replace(',', '').astype(np.int64)
-        except ValueError:
-            stock_df['Volume'] = stock_df['Volume'].replace('-', '0')
-            stock_df['Volume'] = stock_df['Volume'].str.replace(',', '').astype(np.int64)
-
         if use_previous_start_date:
-            return stock_df, previous_start_date
+            return stock_table, previous_start_date
         else:
-            return stock_df, start_date
+            return stock_table, start_date
+
+        # TODO: Section below took a lot of time,
+        #  possible solution:
+        #  - create another method that will be executed separately after this method so it will be possible
+        #  to simultaneously fetch new data from the webpage and convert data into numpy array and save into database
     else:
         print('Data in a given date range already exists')
+
+
+def data_converter(stock_table: WebElement) -> pd.DataFrame:
+    """
+    Convert data into Pandas DataFrame fetch from the webpage.
+    :param stock_table: Selenium webElement with the data fetched from the database.
+    :return: Pandas DataFrame with stock symbol data.
+    """
+    # Merge downloaded data into arrays and format it
+    tmp_arr: np.array = np.array(stock_table.text.split('\n'))
+    separated_data = [re.split(r'\s+(?!Close\*\*)', line) for line in tmp_arr[:-1]
+                      if 'Dividend' not in line if 'Split' not in line]
+    # Remove stars from column names
+    new_column_list: List[str] = []
+    for column_name in separated_data[0]:
+        if '*' in column_name:
+            new_column_list.append(column_name.replace('*', ''))
+        else:
+            new_column_list.append(column_name)
+    separated_data[0] = new_column_list
+    # Concatenate date elements into one element
+    stock_data: List = []
+    for i in range(1, len(separated_data)):
+        date: str = ' '.join(separated_data[i][:3])
+        converted_date: datetime.date = datetime.strftime(datetime.strptime(date, '%b %d, %Y').date(), '%Y-%m-%d')
+        stock_data.append([converted_date] + separated_data[i][3:])
+    final_list = [separated_data[0]] + stock_data
+
+    # Join created arrays into Pandas DataFrame
+    stock_df = pd.DataFrame(final_list[1:], columns=final_list[0])
+
+    # Convert numeric columns to appropriate data type
+    numeric_columns: List[str] = ['Open', 'High', 'Low', 'Close', 'Adj Close']
+    # Remove '-' values with 0
+    try:
+        stock_df[numeric_columns] = stock_df[numeric_columns].astype(float)
+    except ValueError:
+        stock_df = stock_df.replace('-', '0')
+        for column in numeric_columns:
+            stock_df[column] = stock_df[column].str.replace(',', '')
+        stock_df[numeric_columns] = stock_df[numeric_columns].astype(float)
+
+    # Remove commas from "Volume" column and convert to integer
+    try:
+        stock_df['Volume'] = stock_df['Volume'].str.replace(',', '').astype(np.int64)
+    except ValueError:
+        stock_df['Volume'] = stock_df['Volume'].replace('-', '0')
+        stock_df['Volume'] = stock_df['Volume'].str.replace(',', '').astype(np.int64)
+
+    return stock_df
 
 
 def reset_database() -> None:
@@ -457,7 +477,8 @@ def save_into_database(connection: sqlite3.Connection, data: pd.DataFrame, symbo
 
 
 def download_historical_data(symbols: str | List[str] | np.ndarray, start: str, end: str, frequency: str = '1d',
-                             save_database: bool = True, database_name: str = 'stock_database.db') -> DataFrame | None:
+                             save_database: bool = True, database_name: str = 'stock_database.db',
+                             update_list: List[str] = None) -> DataFrame | None:
     """
     Fetch stock market data from the yahoo finance over a given period.
     :param symbols: Stock symbol, accepts a single symbol or a list of symbols
@@ -466,6 +487,7 @@ def download_historical_data(symbols: str | List[str] | np.ndarray, start: str, 
     :param frequency: String specifying the frequency of the data, defaults-1d, possible values: [1d, 1wk, 1mo]
     :param save_database: Determine whether to save csv file. Default True
     :param database_name: Name of the database where data will be saved. Default "stock_database"
+    :param update_list: Array with symbols to update.
     """
     # Check if given frequency is in correct format
     if frequency not in ['1d', '1wk', '1mo']:
@@ -500,7 +522,8 @@ def download_historical_data(symbols: str | List[str] | np.ndarray, start: str, 
     if isinstance(symbols, str):
         try:
             # Create DataFrame with downloaded data from webpage
-            stock_df, start_to_file = symbol_handler(driver, symbols, start, end, frequency, database_name)
+            stock_table, start_to_file = symbol_handler(driver, symbols, start, end, frequency, database_name)
+            stock_df = data_converter(stock_table)
             # Save downloaded data into csv file or return bare DataFrame
             if save_database:
                 save_into_database(conn, stock_df, symbols, start_to_file, end_to_file, frequency)
@@ -513,13 +536,21 @@ def download_historical_data(symbols: str | List[str] | np.ndarray, start: str, 
                 return stock_df
         except TypeError:
             pass
+
+    # TODO: List of asynchronous method:
+    #  - download_data
+    #  - save_into_database
+    #  - data_converter
+    #  - symbol_handler
     # Execute downloading for an array of the symbols
     elif isinstance(symbols, list) or isinstance(symbols, np.ndarray):
         all_symbols_df: List[pd.DataFrame] = []
+        incorrect_symbols: List[str] = []
         for symbol in symbols:
             print(f'Download_func - symbol: {symbol}')
             try:
-                stock_df, start_to_file = symbol_handler(driver, symbol, start, end, frequency, database_name)
+                stock_df, start_to_file = symbol_handler(driver, symbol, start, end, frequency, database_name, incorrect_symbols)
+                stock_df = data_converter(stock_df)
                 if save_database:
                     save_into_database(conn, stock_df, symbol, start_to_file, end_to_file, frequency)
                     stock_df['Company'] = symbol
@@ -529,6 +560,10 @@ def download_historical_data(symbols: str | List[str] | np.ndarray, start: str, 
                     all_symbols_df.append(stock_df)
             except TypeError:
                 pass
+
+        # Remove incorrect symbols from the symbols list to be updated
+        for symbol in incorrect_symbols:
+            update_list.remove(symbol)
 
         if len(all_symbols_df) != 0:
             # print('\n', pd.concat(all_symbols_df, ignore_index=True))
@@ -605,11 +640,11 @@ def update_historical_data(symbols: str | List[str] | np.ndarray, frequency: str
             if 'test' not in database_name:
                 technical_indicators.update_indicators(symbols, database_name)
 
-    elif isinstance(symbols, list) or isinstance(symbols, np.ndarray):
+    elif isinstance(symbols, List) or isinstance(symbols, np.ndarray):
         # Variable to determine the start date for update
         latest_end_date: datetime.date = datetime.now().date()
         # Lists of stock symbols to update
-        symbols_to_update: list[str] = []
+        symbols_to_update: List[str] = []
         for symbol in symbols:
             try:
                 final_table_end = define_update_range(symbol, frequency, database_name)
@@ -632,9 +667,9 @@ def update_historical_data(symbols: str | List[str] | np.ndarray, frequency: str
             # Download data from the new date range and save into symbol table
             updated_data = download_historical_data(symbols_to_update, latest_end_date.strftime('%Y-%m-%d'),
                                                     current_date.strftime('%Y-%m-%d'),
-                                                    frequency, save_database, database_name)
+                                                    frequency, save_database, database_name, symbols_to_update)
             # Update technical indicators
-            if 'test' not in database_name:
+            if 'test' not in database_name or save_database:
                 technical_indicators.update_indicators(symbols_to_update, database_name)
 
     # Create a database backup
@@ -649,9 +684,9 @@ def fetch_from_database(symbol: str, frequency: str, connection: sqlite3.Connect
     """
     Fetch and display data from the database symbol table
     :param connection: Connection to the database.
-    :param symbol: Stock symbol, accepts a single symbol or a list of symbols
-    :param frequency: String specifying the frequency of the data, defaults-1d, possible values: [1d, 1wk, 1mo]
-    :param database_name: Name of the database where data will be saved. Default "stock_database"
+    :param symbol: Stock symbol, accepts a single symbol or a list of symbols.
+    :param frequency: String specifying the frequency of the data, defaults-1d, possible values: [1d, 1wk, 1mo].
+    :param database_name: Name of the database where data will be saved. Default "stock_database".
     """
     if connection is None:
         connection = sqlite3.connect(f'{Path(config.DATA_DICT, "stock_database.db")}')
@@ -672,7 +707,8 @@ def fetch_from_database(symbol: str, frequency: str, connection: sqlite3.Connect
 if __name__ == '__main__':
     pass
     # Tests for stock_symbols file
-    download_historical_data('SNAP', start='2023-01-01', end='2023-08-04', save_database=False)
+    # download_historical_data('SNAP', start='1980-01-01', end='2023-08-04')
+    update_historical_data(symbols=['SNAP', 'NVDA', 'AMZN', 'NKLA'], frequency='1d', save_database=False)
     # reset_database()
     stock_symbols = pd.read_csv(Path(config.DATA_DICT, 'stock_symbols.csv'), header=None)[0].values
     # download_historical_data(symbols=stock_symbols, start='1980-01-01', end='2023-08-04')
