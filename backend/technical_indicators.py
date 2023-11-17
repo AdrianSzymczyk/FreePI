@@ -1,4 +1,5 @@
 import sqlite3
+import time
 from pathlib import Path
 import numpy as np
 from config import config
@@ -276,23 +277,24 @@ def update_single_symbol(connection: sqlite3.Connection, symbol: str, database_n
         sma_periods = [sma for sma in table_columns if 'SMA' in sma]
 
         # Receive data for calculating indicators
-        data: pd.DataFrame = receiver.receive_data(symbol, database_name=database_name)[::-1]
+        data: pd.DataFrame = receiver.receive_data(symbol, connection=connection, database_name=database_name)[::-1]
         # Execute all the indicator methods
         calculate_RSI(symbol, connection=connection, data=data)  # Calculate RSI
         calculate_MACD(symbol, connection=connection, data=data)  # Calculate MACD
         if len(ema_periods) != 0:  # Calculate all the EMA's
             for ema in ema_periods:
-                calculate_EMA(symbol, int(ema.split('_')[1]), data=data)
+                calculate_EMA(symbol, connection=connection, period=int(ema.split('_')[1]), data=data)
         else:
             calculate_EMA(symbol, connection=connection, data=data)
 
         if len(sma_periods) != 0:  # Calculate all the SMA's
             for sma in sma_periods:
-                calculate_SMA(symbol, int(sma.split('_')[1]), data=data)
+                calculate_SMA(symbol, connection=connection, period=int(sma.split('_')[1]), data=data)
         else:
             calculate_SMA(symbol, connection=connection, data=data)
 
 
+# TODO: asynchronous updating indicators for all given symbols
 def update_indicators(symbols: Union[str, List[str], np.ndarray], database_name: str = 'stock_database.db') -> None:
     """
     Update the technical indicators for given symbols

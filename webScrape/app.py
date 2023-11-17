@@ -8,11 +8,10 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import List, Tuple, Union
 from pandas import DataFrame
-
-from config import config
-from config.config import logger
 import numpy as np
 import pandas as pd
+from config import config
+from config.config import logger
 import re
 from backend import technical_indicators
 
@@ -22,7 +21,6 @@ from selenium.webdriver.support.wait import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 import selenium.common.exceptions
 from selenium.webdriver.remote.webelement import WebElement
-
 import chromedriver_autoinstaller
 
 
@@ -42,7 +40,7 @@ def setup_webdriver() -> webdriver:
     chrome_options.add_argument("--disable-blink-features=AutomationControlled")
 
     # Running in Headless Mode (Do not display browser)
-    # chrome_options.add_argument('--headless')
+    chrome_options.add_argument('--headless')
 
     # Exclude the collection of enable-logging switches
     chrome_options.add_argument("--ignore-certificate-errors")
@@ -84,6 +82,7 @@ def timer(func):
         run_time = end_time - start_time
         print(f'Finished {func.__name__!r} in {run_time:.3f} sec.')
         return result
+
     return wrapper
 
 
@@ -115,22 +114,26 @@ def get_name_of_symbol_table(symbol: str, frequency: str, connection: None | sql
     :param database_name: Name of the database where data will be saved. Default "stock_database"
     :return: Name of the stock symbol table
     """
-
+    new_connection: bool = False
     if connection is None:
+        new_connection = True
         if 'test' in database_name:
             connection = sqlite3.connect(f'{database_name}')
         else:
             connection = sqlite3.connect(f'{Path(config.DATA_DICT, database_name)}')
     find_table_query = (f"SELECT name "
                         f"FROM sqlite_master "
-                        f"WHERE type='table' AND name LIKE '%{symbol}%freq={frequency}%';")
+                        f"WHERE type='table' AND name LIKE 'stock_{symbol}_%freq={frequency}%';")
     cursor = connection.execute(find_table_query)
     try:
         all_tables = cursor.fetchall()
         table_name = all_tables[0][0]
+        if new_connection:
+            connection.close()
         return table_name
     except IndexError:
-        pass
+        if new_connection:
+            connection.close()
 
 
 def date_and_freq_check(symbol: str, input_start_date: datetime.date, input_end_date: datetime.date,
@@ -175,7 +178,6 @@ def date_and_freq_check(symbol: str, input_start_date: datetime.date, input_end_
         return True
 
 
-# TODO: think about the asynchronous symbol handling and saving into the database
 def symbol_handler(driver: webdriver, symbol: str, start_date: datetime, end_date: datetime,
                    frequency: str, database_name: str = 'stock_database.db',
                    incorrect_symbols: List[str] = None) -> pd.DataFrame | str | None:
@@ -290,6 +292,9 @@ def symbol_handler(driver: webdriver, symbol: str, start_date: datetime, end_dat
                 # Check whether all the data loaded
                 if lower_start_limit < last_date < upper_start_limit:
                     all_data_loaded = True
+                    if last_date == datetime.strptime("1972-06-02", '%Y-%m-%d').date():
+                        print('1972-06-02 reached DEAD END')
+                        start_date = 'oldest_' + str(last_date)
                     break
 
                 # If the current scroll position is the same as the previous position, you've reached the end
@@ -301,6 +306,7 @@ def symbol_handler(driver: webdriver, symbol: str, start_date: datetime, end_dat
                     except selenium.common.exceptions.NoSuchElementException:
                         print('Reached the end of the data')
                         all_data_loaded = True
+                        # TODO: when 1972-06-02 reached add oldest a the begging of the table name
                         # Change start date into last date from the yahoo finance
                         start_date = 'oldest_' + str(last_date)
                         break
@@ -319,11 +325,6 @@ def symbol_handler(driver: webdriver, symbol: str, start_date: datetime, end_dat
             return stock_table, previous_start_date
         else:
             return stock_table, start_date
-
-        # TODO: Section below took a lot of time,
-        #  possible solution:
-        #  - create another method that will be executed separately after this method so it will be possible
-        #  to simultaneously fetch new data from the webpage and convert data into numpy array and save into database
     else:
         print('Data in a given date range already exists')
 
@@ -522,26 +523,18 @@ def download_historical_data(symbols: str | List[str] | np.ndarray, start: str, 
     if isinstance(symbols, str):
         try:
             # Create DataFrame with downloaded data from webpage
-            stock_table, start_to_file = symbol_handler(driver, symbols, start, end, frequency, database_name)
+            stock_table, start_to_file = symbol_handler(driver, symbols, start, end, frequency, database_name, [])
             stock_df = data_converter(stock_table)
             # Save downloaded data into csv file or return bare DataFrame
             if save_database:
                 save_into_database(conn, stock_df, symbols, start_to_file, end_to_file, frequency)
-                driver.quit()
-                conn.close()
-                return stock_df
-            else:
+            if 'test' in database_name:
                 driver.quit()
                 conn.close()
                 return stock_df
         except TypeError:
             pass
 
-    # TODO: List of asynchronous method:
-    #  - download_data
-    #  - save_into_database
-    #  - data_converter
-    #  - symbol_handler
     # Execute downloading for an array of the symbols
     elif isinstance(symbols, list) or isinstance(symbols, np.ndarray):
         all_symbols_df: List[pd.DataFrame] = []
@@ -565,7 +558,7 @@ def download_historical_data(symbols: str | List[str] | np.ndarray, start: str, 
         for symbol in incorrect_symbols:
             update_list.remove(symbol)
 
-        if len(all_symbols_df) != 0:
+        if len(all_symbols_df) != 0 and 'test' in database_name:
             # print('\n', pd.concat(all_symbols_df, ignore_index=True))
             driver.quit()
             conn.close()
@@ -608,7 +601,7 @@ def define_update_range(symbol: str, frequency: str, database_name: str = 'stock
     if database_table_name is not None:
         table_start, table_end = extract_date_from_table(database_table_name)
         return table_end
-    return datetime.strptime('1980-01-01', '%Y-%m-%d').date()
+    return datetime.strptime('1972-06-02', '%Y-%m-%d').date()
 
 
 @timer
@@ -670,13 +663,15 @@ def update_historical_data(symbols: str | List[str] | np.ndarray, frequency: str
                                                     frequency, save_database, database_name, symbols_to_update)
             # Update technical indicators
             if 'test' not in database_name or save_database:
+                start_time = time.perf_counter()
                 technical_indicators.update_indicators(symbols_to_update, database_name)
+                print(f'\n Collecting indicators took: {time.perf_counter() - start_time} seconds')
 
-    # Create a database backup
+    # Create a database backup or return pandas DataFrame with data
     if 'test' not in database_name:
         backup_database()
-
-    return updated_data
+    else:
+        return updated_data
 
 
 def fetch_from_database(symbol: str, frequency: str, connection: sqlite3.Connection | None = None,
@@ -708,9 +703,8 @@ if __name__ == '__main__':
     pass
     # Tests for stock_symbols file
     # download_historical_data('SNAP', start='1980-01-01', end='2023-08-04')
-    update_historical_data(symbols=['SNAP', 'NVDA', 'AMZN', 'NKLA'], frequency='1d', save_database=False)
     # reset_database()
     stock_symbols = pd.read_csv(Path(config.DATA_DICT, 'stock_symbols.csv'), header=None)[0].values
     # download_historical_data(symbols=stock_symbols, start='1980-01-01', end='2023-08-04')
-    # update_historical_data(stock_symbols, '1d')
+    update_historical_data(stock_symbols, '1d')
     # display_database_tables()
