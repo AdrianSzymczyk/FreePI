@@ -1,5 +1,4 @@
 import sqlite3
-import time
 from pathlib import Path
 import numpy as np
 from config import config
@@ -294,7 +293,6 @@ def update_single_symbol(connection: sqlite3.Connection, symbol: str, database_n
             calculate_SMA(symbol, connection=connection, data=data)
 
 
-# TODO: asynchronous updating indicators for all given symbols
 def update_indicators(symbols: Union[str, List[str], np.ndarray], database_name: str = 'stock_database.db') -> None:
     """
     Update the technical indicators for given symbols
