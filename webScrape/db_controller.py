@@ -10,12 +10,11 @@ from typing import Union, List
 from datetime import datetime
 
 
-
 def delete_duplicates(connection: sqlite3.Connection, table_name: str) -> None:
     """
-    Delete duplicates from the specified database table
-    :param connection: Connection to the SQLite database
-    :param table_name: Name of the database table from which to remove duplicates
+    Delete duplicates from the specified database table.
+    :param connection: Connection to the SQLite database.
+    :param table_name: Name of the database table from which to remove duplicates.
     """
     duplicate_query: str = f'''
         SELECT Date, COUNT(*)
@@ -43,12 +42,12 @@ def save_into_database(connection: sqlite3.Connection, data: pd.DataFrame, symbo
                        end_date: datetime.date, frequency: str,
                        database_name: str = 'stock_database.db') -> None:
     """
-    Save data to a database specific table
-    :param connection: Connection to the SQLite database
-    :param data: Pandas DataFrame with stock symbol data
-    :param symbol: Stock market symbol
-    :param start_date: Beginning of the period of time
-    :param end_date: End of the period of time
+    Save data to a database specific table.
+    :param connection: Connection to the SQLite database.
+    :param data: Pandas DataFrame with stock symbol data.
+    :param symbol: Stock market symbol.
+    :param start_date: Beginning of the period of time.
+    :param end_date: End of the period of time.
     :param frequency: String specifying the frequency of the data, defaults-1d, possible values: [1d, 1wk, 1mo]
     :param database_name: Name of the database where data will be saved. Default "stock_database"
     """
@@ -94,7 +93,7 @@ def save_into_database(connection: sqlite3.Connection, data: pd.DataFrame, symbo
 def fetch_from_database(symbol: str, frequency: str, connection: sqlite3.Connection | None = None,
                         database_name: str = 'stock_database.db') -> None:
     """
-    Fetch and display data from the database symbol table
+    Fetch and display data from the database symbol table.
     :param connection: Connection to the database.
     :param symbol: Stock symbol, accepts a single symbol or a list of symbols.
     :param frequency: String specifying the frequency of the data, defaults-1d, possible values: [1d, 1wk, 1mo].
@@ -117,61 +116,103 @@ def fetch_from_database(symbol: str, frequency: str, connection: sqlite3.Connect
     connection.close()
 
 
-def reset_database() -> None:
-    """Reset database by deleting it and creating new one"""
-    try:
-        # Create a backup of the database
-        backup_database()
-        # Remove current working database
-        os.remove(Path(config.DATA_DICT, 'stock_database.db'))
-    except FileNotFoundError:
-        print('Database does not exist!')
-    # Create a new empty database
-    conn = sqlite3.connect(f'{Path(config.DATA_DICT, "stock_database.db")}')
-    conn.close()
+def check_previous_backup(backup_files_list: List[str] = None) -> str:
+    """
+    Check if there is already a backup for current month.
+    :param backup_files_list: List of the files inside backup directory.
+    :return: Name of the file to be deleted or empty string.
+    """
+    # Save current daytime and month
+    current_day: datetime = datetime.now()
+    current_month: datetime = current_day.month
+    # Create paths for new and existing data
+    backup_path: Path = Path(config.DATA_DICT, 'backups')
+    if backup_files_list is None:
+        backup_files_list: List[str] = os.listdir(backup_path)
+
+    backup_to_delete: str = ""
+    for file in backup_files_list:
+        if str(current_month) in file:
+            file_date = file.split('_')[2]
+            if current_day.day - 7 == int(file_date[-5:-3]):
+                backup_to_delete = file
+
+    return backup_to_delete
 
 
-def backup_database() -> None:
-    """Create a backup version of the database"""
-    current_day = datetime.now()
-    database_path: Path = Path(config.DATA_DICT, 'stock_database.db')
-    backup_path: Path = Path(config.DATA_DICT, 'backups', f'backup_database_{current_day.date()}.db')
-    # Copy current database data to the backup database
-    if os.path.isfile(database_path):
-        shutil.copy2(database_path, backup_path)
+def manage_previous_backups(backup_files_list: List[str] = None) -> None:
+    """
+    Delete previous backup file if exists.
+    :param backup_files_list: List of the files inside backup directory.
+    """
+    # Create paths for new and existing data
+    backup_path: Path = Path(config.DATA_DICT, 'backups')
+    if backup_files_list is None:
+        backup_files_list: List[str] = os.listdir(backup_path)
+
+    # Define whether to delete previous backup files
+    delete_previous: str = check_previous_backup(backup_files_list)
+
+    if delete_previous:
+        os.remove(Path(backup_path, delete_previous))
 
 
-def manage_backups() -> None:
-    # Get current year and month
-    current_month_year: datetime.date = datetime.now().strftime('%Y-%m')
-    current_year: str = current_month_year[:4]
-    current_month: str = current_month_year[5:]
+def zip_file_manager():
+    """Manage stored backups and save yearly backups in the zipfile."""
+    # Get current year
+    current_year: str = str(datetime.now().year)
 
     # Create paths for new and existing data
     backup_path: Path = Path(config.DATA_DICT, 'backups')
-    zipfile_path: Path = Path(backup_path, current_year, current_month)
+    zipfile_path: Path = Path(backup_path, current_year)
     if not os.path.isdir(zipfile_path):
         os.makedirs(zipfile_path)
 
     # Get all files inside backup directory
     databases_array: List[str] = os.listdir(backup_path)
-    zipfile_name: str = f'backup_{current_month_year}.zip'
+    zipfile_name: str = f'backup_{current_year}.zip'
+
+    files_to_remove: List[str] = []
     # Create a zip file with the specified name
     with zipfile.ZipFile(Path(zipfile_path, zipfile_name), 'w') as zip_file:
         # Iterate through files in the directory
         for db_file in databases_array:
             try:
                 database_date = db_file.split('_')[2][:10]
-                if current_month_year == database_date[0:7]:
+                if current_year == database_date[0:4]:
                     file_path: Path = Path(config.DATA_DICT, 'backups', db_file)
                     # Add the file to the zip file
                     zip_file.write(file_path, os.path.relpath(file_path, backup_path))
+                    # Append database file to removing array
+                    files_to_remove.append(db_file)
             except IndexError:
                 pass
 
+    # Remove files saved in the zip file
+    for file in files_to_remove:
+        os.remove(Path(backup_path, file))
+
+
+def manage_backups() -> None:
+    """Manage stored backups and save yearly backups in the zipfile."""
+    # Get current date
+    current_year_month: str = datetime.now().strftime('%Y-%m')
+
+    # Get all files inside backup directory
+    backup_path: Path = Path(config.DATA_DICT, 'backups')
+    databases_array: List[str] = os.listdir(backup_path)
+
+    # Manage previous backups
+    manage_previous_backups(databases_array)
+
+    # Create zip file with backup files for entire year
+    zip_condition: datetime = current_year_month[:4] + '-01'
+    if current_year_month == zip_condition and not os.path.isdir(Path(backup_path, current_year_month[:4])):
+        zip_file_manager()
+
 
 def display_database_tables() -> None:
-    """Display names of all the database tables"""
+    """Display names of all the database tables."""
     # Connect to the database
     conn = sqlite3.connect(f'{Path(config.DATA_DICT, "stock_database.db")}')
     try:
@@ -191,5 +232,38 @@ def display_database_tables() -> None:
         conn.close()
 
 
-if __name__ == "__main__":
+def reset_database() -> None:
+    """Reset database by deleting it and creating new one."""
+    try:
+        # Create a backup of the database
+        backup_database()
+        # Remove current working database
+        os.remove(Path(config.DATA_DICT, 'stock_database.db'))
+    except FileNotFoundError:
+        print('Database does not exist!')
+    # Create a new empty database
+    conn = sqlite3.connect(f'{Path(config.DATA_DICT, "stock_database.db")}')
+    conn.close()
+
+
+def backup_database(force: bool = False) -> None:
+    """
+    Create a backup version of the database.
+    :param force: Bool value defining if create backup regardless of date.
+    """
+    current_day: datetime = datetime.now()
+    current_weekday: datetime = current_day.strftime("%A")
+    if current_weekday == 'Friday' or force:
+        database_path: Path = Path(config.DATA_DICT, 'stock_database.db')
+        backup_path: Path = Path(config.DATA_DICT, 'backups', f'backup_database_{current_day.date()}.db')
+        # Copy current database data to the backup database
+        if os.path.isfile(database_path):
+            shutil.copy2(database_path, backup_path)
+
+    # Manage backups
     manage_backups()
+
+
+if __name__ == "__main__":
+    pass
+    backup_database()
