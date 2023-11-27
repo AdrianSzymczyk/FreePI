@@ -40,7 +40,7 @@ def setup_webdriver() -> webdriver:
     chrome_options.add_argument("--disable-blink-features=AutomationControlled")
 
     # Running in Headless Mode (Do not display browser)
-    chrome_options.add_argument('--headless')
+    # chrome_options.add_argument('--headless')
 
     # Exclude the collection of enable-logging switches
     chrome_options.add_argument("--ignore-certificate-errors")
@@ -93,12 +93,12 @@ def extract_date_from_table(table: str) -> (datetime.date, datetime.date):
     :return: Start and end dates from the table name
     """
     # Check that the data comes from the longest range
-    if len(table.split('_')) > 3:
-        table_date = table.split('_')[3].split('&')[0]
-    elif len(table.split('_')) > 2:
+    # if len(table.split('_')) > 3:
+    #     table_date = table.split('_')[3].split('&')[0]
+    if len(table.split('_')) > 2:
         table_date = table.split('_')[2].split('&')[0]
     else:
-        table_date = table.split('_')[1].split('&')[0]
+        table_date = table.split('|')[1].split('&')[0]
     table_start = datetime.strptime(table_date[:10], '%Y-%m-%d').date()
     table_end = datetime.strptime(table_date[11:], '%Y-%m-%d').date()
     return table_start, table_end
@@ -123,7 +123,7 @@ def get_name_of_symbol_table(symbol: str, frequency: str, connection: None | sql
             connection = sqlite3.connect(f'{Path(config.DATA_DICT, database_name)}')
     find_table_query = (f"SELECT name "
                         f"FROM sqlite_master "
-                        f"WHERE type='table' AND name LIKE 'stock_{symbol}_%freq={frequency}%';")
+                        f"WHERE type='table' AND name LIKE 'stock_{symbol}|%freq={frequency}%';")
     cursor = connection.execute(find_table_query)
     try:
         all_tables = cursor.fetchall()
@@ -261,6 +261,8 @@ def symbol_handler(driver: webdriver, symbol: str, start_date: datetime, end_dat
                         'window.scrollTo(0, document.getElementById("render-target-default").scrollHeight);')
                 except selenium.common.exceptions.StaleElementReferenceException:
                     driver.refresh()
+                except selenium.common.exceptions.JavascriptException:
+                    driver.refresh()
                 # Wait to load page
                 time.sleep(0.2)
                 # Get the current scroll position
@@ -314,12 +316,15 @@ def symbol_handler(driver: webdriver, symbol: str, start_date: datetime, end_dat
                 prev_scroll_position = current_scroll_position
             # Refresh webpage caused by not loading data
             if endless_loop:
-                print('Refreshing page!!!')
                 driver.refresh()
 
+        stock_table: selenium.webdriver.remote.webelement = None
         # Get all data from the loaded table
-        stock_table = driver.find_element(By.XPATH,
-                                          '//*[@id="Col1-1-HistoricalDataTable-Proxy"]/section/div[2]/table')
+        try:
+            stock_table = driver.find_element(By.XPATH,
+                                              '//*[@id="Col1-1-HistoricalDataTable-Proxy"]/section/div[2]/table')
+        except selenium.common.exceptions.NoSuchElementException:
+            driver.refresh()
         if use_previous_start_date:
             return stock_table, previous_start_date
         else:
@@ -552,7 +557,6 @@ def update_historical_data(symbols: str | List[str] | np.ndarray, frequency: str
             if 'test' not in database_name or save_database:
                 start_time = time.perf_counter()
                 technical_indicators.update_indicators(symbols_to_update, database_name)
-                print(f'\n Collecting indicators took: {time.perf_counter() - start_time} seconds')
 
     # Create a database backup or return pandas DataFrame with data
     if 'test' not in database_name:

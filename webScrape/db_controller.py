@@ -52,7 +52,7 @@ def save_into_database(connection: sqlite3.Connection, data: pd.DataFrame, symbo
     :param database_name: Name of the database where data will be saved. Default "stock_database"
     """
     # Create a table name
-    table_name = f'stock_{symbol}_{start_date}-{end_date}&freq={frequency}'
+    table_name = f'stock_{symbol}|{start_date}-{end_date}&freq={frequency}'
     # Define the table schema
     create_table_query = '''
                     CREATE TABLE IF NOT EXISTS master_table (
@@ -77,7 +77,7 @@ def save_into_database(connection: sqlite3.Connection, data: pd.DataFrame, symbo
             if table_start < start_date:
                 if database_table_name.split('_')[2] == 'oldest':
                     table_start = 'oldest_' + str(table_start)
-                table_name = f'stock_{symbol}_{table_start}-{end_date}&freq={frequency}'
+                table_name = f'stock_{symbol}|{table_start}-{end_date}&freq={frequency}'
         # Add Pandas dataframe to the sql database
         data.to_sql(database_table_name, connection, if_exists='append', index=False)
         change_table_name_query = f'ALTER TABLE `{database_table_name}` RENAME TO `{table_name}`'

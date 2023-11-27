@@ -80,8 +80,9 @@ def receive_data(symbol: str, connection: sqlite3.Connection | None = None, star
     if symbol_table_name is not None:
         # Check whether the receiver date range is covered by existing data
         table_start, table_end = app.extract_date_from_table(symbol_table_name)
-        if ((start_date < table_start and symbol_table_name.split('_')[2] != 'oldest') or end_date > table_end
-                or (table_start > limit_date and symbol_table_name.split('_')[2] != 'oldest')):
+        if ((start_date < table_start and 'oldest' not in symbol_table_name.split('_')[1])
+                or end_date > table_end
+                or (table_start > limit_date and 'oldest' not in symbol_table_name.split('_')[1])):
             app.download_historical_data(symbol, start, end, frequency)
             # Update table name
             symbol_table_name = app.get_name_of_symbol_table(symbol, frequency, connection)
