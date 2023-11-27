@@ -3,7 +3,7 @@ import sqlite3
 from typing import List
 import pandas as pd
 import pytest
-from webScrape import app
+from webScrape import db_controller
 from pathlib import Path
 
 
@@ -87,7 +87,7 @@ def test_db_duplicates(data_directory, data):
     conn = create_db_connection(data_directory, database_name + '.db')
     for _ in range(2):
         data.to_sql('test_table', conn, if_exists='append', index=False)
-    app.delete_duplicates(conn, 'test_table')
+    db_controller.delete_duplicates(conn, 'test_table')
     results = get_database_data(conn, 'test_table')
     assert len(results) == 1
     conn.close()
