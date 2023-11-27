@@ -156,7 +156,7 @@ def date_and_freq_check(symbol: str, input_start_date: datetime.date, input_end_
         database_table_name: str = get_name_of_symbol_table(symbol, frequency, connection, database_name)
         if database_table_name is not None:
             table_start, table_end = extract_date_from_table(database_table_name)
-            if database_table_name.split('_')[2] == 'oldest':
+            if database_table_name.split('_')[1].split('|')[1] == 'oldest':
                 oldest = True
             if table_start <= input_start_date and input_end_date <= table_end:
                 return False

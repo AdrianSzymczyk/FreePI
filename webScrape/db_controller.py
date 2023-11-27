@@ -75,7 +75,7 @@ def save_into_database(connection: sqlite3.Connection, data: pd.DataFrame, symbo
         table_start, table_end = app.extract_date_from_table(database_table_name)
         if not isinstance(start_date, str):
             if table_start < start_date:
-                if database_table_name.split('_')[2] == 'oldest':
+                if database_table_name.split('_')[1].split('|')[1] == 'oldest':
                     table_start = 'oldest_' + str(table_start)
                 table_name = f'stock_{symbol}|{table_start}-{end_date}&freq={frequency}'
         # Add Pandas dataframe to the sql database

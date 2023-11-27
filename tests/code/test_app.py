@@ -83,7 +83,7 @@ def test_download_symbol_data(data_directory, symbol, date_range, frequency, db_
     end_date_limit: List[datetime.date] = []
 
     stock_data: pd.DataFrame = app.download_historical_data(symbol, start_date, end_date, frequency,
-                                                            save_database=db_save, database_name=f'{data_directory}/test_database.db')
+                                                            save_database=db_save, database_name=f'{data_directory}\\test_database.db')
     if stock_data is not None:
         last_date = datetime.datetime.strptime(stock_data['Date'].iloc[0], '%Y-%m-%d').date()
         first_date = datetime.datetime.strptime(stock_data['Date'].iloc[-1], '%Y-%m-%d').date()
@@ -96,8 +96,9 @@ def test_download_symbol_data(data_directory, symbol, date_range, frequency, db_
         start_date_limit = date_safe_range(start_date, frequency)
         end_date_limit = date_safe_range(end_date, frequency)
 
-    assert (extra_info in ['inRange', 'incorrect'] or start_date_limit[0] <= first_date <= start_date_limit[1]
-            or start_date_limit[0] < first_date)
+    assert (extra_info in ['inRange', 'incorrect'] or
+            start_date_limit[0] <= first_date <= start_date_limit[1] or
+            start_date_limit[0] < first_date)
     assert extra_info in ['inRange', 'incorrect'] or end_date_limit[0] <= last_date <= end_date_limit[1]
 
     if not db_save:
@@ -126,7 +127,7 @@ def test_update_data(data_directory, symbol, frequency, db_save, extra_info):
     last_date: datetime.date = datetime.datetime.now()
 
     stock_data: pd.DataFrame = app.update_historical_data(symbol, frequency, save_database=db_save,
-                                                          database_name=f'{data_directory}/test_database.db')
+                                                          database_name=f'{data_directory}\\test_database.db')
 
     if stock_data is not None:
         last_date = datetime.datetime.strptime(stock_data['Date'].iloc[0], '%Y-%m-%d').date()
@@ -141,8 +142,8 @@ def test_date_check(data_directory, data):
     Test method responsible for checking data and frequency.
     """
     conn = sqlite3.connect(Path(data_directory, 'test_database.db'))
-    database_names: List[str] = ['stock_TSLA_2020-08-01-2023-03-01&freq=1d',
-                                 'stock_NVDA_2022-05-01-2023-05-01&freq=1d']
+    database_names: List[str] = ['stock_TSLA|2020-08-01-2023-03-01&freq=1d',
+                                 'stock_NVDA|2022-05-01-2023-05-01&freq=1d']
     for table in database_names:
         data.to_sql(table, conn, if_exists='replace', index=False)
     assert app.date_and_freq_check('TSLA', datetime.date(2021, 1, 1),
