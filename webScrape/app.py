@@ -196,6 +196,7 @@ def symbol_handler(driver: webdriver, symbol: str, start_date: datetime, end_dat
     symbol = symbol.upper()
     use_previous_start_date: bool = False
     previous_start_date: str = ''
+    stock_table: selenium.webdriver.remote.webelement = None
 
     result = date_and_freq_check(symbol, start_date.date(), end_date.date(), frequency, database_name=database_name)
     if isinstance(result, bool):
@@ -293,10 +294,17 @@ def symbol_handler(driver: webdriver, symbol: str, start_date: datetime, end_dat
 
                 # Check whether all the data loaded
                 if lower_start_limit < last_date < upper_start_limit:
-                    all_data_loaded = True
                     if last_date.year == 1972:
                         print('1972-06-02 reached DEAD END')
                         start_date = 'oldest_' + str(last_date)
+
+                    # Get all data from the loaded table
+                    try:
+                        stock_table = driver.find_element(By.XPATH, '//*[@id="Col1-1-HistoricalDataTable-Proxy"]/section/div[2]/table')
+                    except selenium.common.exceptions.NoSuchElementException:
+                        driver.refresh()
+
+                    all_data_loaded = True
                     break
 
                 # If the current scroll position is the same as the previous position, you've reached the end
@@ -307,9 +315,16 @@ def symbol_handler(driver: webdriver, symbol: str, start_date: datetime, end_dat
                         break
                     except selenium.common.exceptions.NoSuchElementException:
                         print('Reached the end of the data')
-                        all_data_loaded = True
                         # Change start date into last date from the yahoo finance
                         start_date = 'oldest_' + str(last_date)
+
+                        # Get all data from the loaded table
+                        try:
+                            stock_table = driver.find_element(By.XPATH, '//*[@id="Col1-1-HistoricalDataTable-Proxy"]/section/div[2]/table')
+                        except selenium.common.exceptions.NoSuchElementException:
+                            driver.refresh()
+
+                        all_data_loaded = True
                         break
 
                 # Update the previous scroll position for the next iteration
@@ -318,13 +333,6 @@ def symbol_handler(driver: webdriver, symbol: str, start_date: datetime, end_dat
             if endless_loop:
                 driver.refresh()
 
-        stock_table: selenium.webdriver.remote.webelement = None
-        # Get all data from the loaded table
-        try:
-            stock_table = driver.find_element(By.XPATH,
-                                              '//*[@id="Col1-1-HistoricalDataTable-Proxy"]/section/div[2]/table')
-        except selenium.common.exceptions.NoSuchElementException:
-            driver.refresh()
         if use_previous_start_date:
             return stock_table, previous_start_date
         else:
@@ -555,7 +563,6 @@ def update_historical_data(symbols: str | List[str] | np.ndarray, frequency: str
                                                     frequency, save_database, database_name, symbols_to_update)
             # Update technical indicators
             if 'test' not in database_name or save_database:
-                start_time = time.perf_counter()
                 technical_indicators.update_indicators(symbols_to_update, database_name)
 
     # Create a database backup or return pandas DataFrame with data
@@ -563,6 +570,9 @@ def update_historical_data(symbols: str | List[str] | np.ndarray, frequency: str
         db_controller.backup_database()
     else:
         return updated_data
+
+# TODO: Run lambda function in AWS at night when stock market is closed and new day starts,
+#  ex. for 27.11.2023 script should be involved at 28.11.2023
 
 
 if __name__ == '__main__':
