@@ -3,7 +3,7 @@ import sqlite3
 from typing import List
 import pandas as pd
 import pytest
-from webScrape import app
+from webScrape import db_controller
 from pathlib import Path
 
 
@@ -31,9 +31,7 @@ def data():
 
 
 def create_db_connection(data_directory, database_name: str) -> sqlite3.Connection:
-    """
-    Create and return connection to the test database.
-    """
+    """Create and return connection to the test database."""
     try:
         conn = sqlite3.connect(Path(data_directory, database_name))
         return conn
@@ -43,9 +41,7 @@ def create_db_connection(data_directory, database_name: str) -> sqlite3.Connecti
 
 
 def delete_db(data_directory):
-    """
-    Delete the entire database.
-    """
+    """Delete the entire database."""
     try:
         os.remove(Path(data_directory, 'test_database.db'))
     except FileNotFoundError:
@@ -53,9 +49,7 @@ def delete_db(data_directory):
 
 
 def get_database_data(connection: sqlite3.Connection, table_name: str) -> List:
-    """
-    Retrieve data from the database table.
-    """
+    """Retrieve data from the database table."""
     retrieve_query: str = f' SELECT * FROM {table_name} ORDER BY Date DESC'
     cursor = connection.execute(retrieve_query)
     return cursor.fetchall()
@@ -63,9 +57,7 @@ def get_database_data(connection: sqlite3.Connection, table_name: str) -> List:
 
 @pytest.mark.database
 def test_db_connect(data_directory):
-    """
-    Test connection with test database.
-    """
+    """Test connection with test database."""
     conn = create_db_connection(data_directory, 'test_database.db')
     assert isinstance(conn, sqlite3.Connection)
     conn.close()
@@ -73,9 +65,7 @@ def test_db_connect(data_directory):
 
 @pytest.mark.database
 def test_db_df_insert(data_directory, data):
-    """
-    Test insertion into test database.
-    """
+    """Test insertion into test database."""
     database_name: str = 'test_database'
     conn = create_db_connection(data_directory, database_name + '.db')
     data.to_sql('test_table', conn, if_exists='append', index=False)
@@ -92,14 +82,12 @@ def test_db_df_insert(data_directory, data):
 
 @pytest.mark.database
 def test_db_duplicates(data_directory, data):
-    """
-    Test duplicates detection from the test table.
-    """
+    """Test duplicates detection from the test table."""
     database_name: str = 'test_database'
     conn = create_db_connection(data_directory, database_name + '.db')
     for _ in range(2):
         data.to_sql('test_table', conn, if_exists='append', index=False)
-    app.delete_duplicates(conn, 'test_table')
+    db_controller.delete_duplicates(conn, 'test_table')
     results = get_database_data(conn, 'test_table')
     assert len(results) == 1
     conn.close()

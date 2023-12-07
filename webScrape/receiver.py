@@ -46,19 +46,17 @@ def receiver(connection: sqlite3.Connection, symbol_table_name: str, start_date:
     except AttributeError:
         pass
 
-    # Close connection with database
-    connection.close()
-
     return df_symbol
 
 
-def receive_data(symbol: str, start: str = '1980-01-01',
+def receive_data(symbol: str, connection: sqlite3.Connection | None = None, start: str = '1972-06-02',
                  end: str = datetime.strftime(datetime.now().date(), '%Y-%m-%d'),
                  frequency: str = '1d', change_index: bool = False,
                  database_name: str = 'stock_database.db') -> pd.DataFrame:
     """
     Return data from a date range from a specific stock symbol
     :param symbol: Stock market symbol
+    :param connection: Connection to the SQLite database
     :param start: Beginning of the period of time, valid format: "2021-09-08"
     :param end: End of the period of time, valid format: "2021-08-08"
     :param frequency: String defining the frequency of the data, defaults-1d, possible values: [1d, 1wk, 1mo]
@@ -67,28 +65,37 @@ def receive_data(symbol: str, start: str = '1980-01-01',
     :return: Pandas DataFrame with stock data from a date range
     """
     # Convert passed start and end dates into datetime.date format
+    received_data: pd.DataFrame = pd.DataFrame()
     start_date: datetime.date = datetime.strptime(start, '%Y-%m-%d').date()
     end_date: datetime.date = datetime.strptime(end, '%Y-%m-%d').date()
 
+    new_connection: bool = False
+    limit_date: datetime.date = datetime.strptime('1972-06-02', '%Y-%m-%d').date()
     # Connect to the database
-    conn = sqlite3.connect(f'{Path(config.DATA_DICT, database_name)}')
+    if connection is None:
+        new_connection = True
+        connection = sqlite3.connect(f'{Path(config.DATA_DICT, database_name)}')
     # Get the name of the symbol table
-    symbol_table_name: str = app.get_name_of_symbol_table(symbol, frequency, conn)
+    symbol_table_name: str = app.get_name_of_symbol_table(symbol, frequency, connection)
     if symbol_table_name is not None:
         # Check whether the receiver date range is covered by existing data
         table_start, table_end = app.extract_date_from_table(symbol_table_name)
-        if (start_date < table_start and symbol_table_name.split('_')[2] != 'oldest') or end_date > table_end:
+        if ((start_date < table_start and 'oldest' not in symbol_table_name.split('_')[1])
+                or end_date > table_end
+                or (table_start > limit_date and 'oldest' not in symbol_table_name.split('_')[1])):
             app.download_historical_data(symbol, start, end, frequency)
             # Update table name
-            symbol_table_name = app.get_name_of_symbol_table(symbol, frequency, conn)
-        return receiver(conn, symbol_table_name, start_date, end_date, change_index)
+            symbol_table_name = app.get_name_of_symbol_table(symbol, frequency, connection)
+        received_data = receiver(connection, symbol_table_name, start_date, end_date, change_index)
     else:
         app.download_historical_data(symbol, start, end, frequency)
         # Get the name of the symbol table
-        symbol_table_name = app.get_name_of_symbol_table(symbol, frequency, conn)
+        symbol_table_name = app.get_name_of_symbol_table(symbol, frequency, connection)
         if symbol_table_name is not None:
-            return receiver(conn, symbol_table_name, start_date, end_date, change_index)
-    return f'Given symbol {symbol} does not exist'
+            received_data = receiver(connection, symbol_table_name, start_date, end_date, change_index)
+    if new_connection:
+        connection.close()
+    return received_data
 
 
 if __name__ == "__main__":

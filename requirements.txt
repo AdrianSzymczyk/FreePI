@@ -8,5 +8,6 @@ matplotlib~=3.7.1
 rich~=13.6.0
 pytest~=7.4.3
 webdriver-manager~=4.0.1
-chromedriver_autoinstaller~=0.6.2
+chromedriver-autoinstaller~=0.6.2
 PyVirtualDisplay~=3.0
+uvicorn~=0.23.2
