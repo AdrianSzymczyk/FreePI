@@ -39,12 +39,18 @@ def setup_webdriver() -> webdriver:
     # Adding argument to disable the AutomationControlled flag
     chrome_options.add_argument("--disable-blink-features=AutomationControlled")
 
-    # Running in Headless Mode (Do not display browser)
-    # chrome_options.add_argument('--headless')
-
     # Exclude the collection of enable-logging switches
-    chrome_options.add_argument("--ignore-certificate-errors")
+    chrome_options.add_argument('--ignore-ssl-errors=yes')
+    chrome_options.add_argument('--ignore-certificate-errors')
     chrome_options.add_experimental_option('excludeSwitches', ['enable-logging'])
+
+    chrome_options.add_argument('log-level=3')
+    chrome_options.add_argument('--headless')  # Running in Headless Mode (Do not display browser)
+    chrome_options.add_argument("--start-maximized")  # Open Browser in maximized mode
+    chrome_options.add_argument("--disable-extensions")  # Disabling extensions
+    chrome_options.add_argument('--disable-gpu')  # Applicable to windows as only
+    chrome_options.add_argument("--disable-dev-shm-usage")  # Overcome limited resource problems
+    chrome_options.add_argument('--no-sandbox')  # Bypass OS security model WebDriver
 
     # Turn-off userAutomationExtension
     chrome_options.add_experimental_option("useAutomationExtension", False)
@@ -300,7 +306,8 @@ def symbol_handler(driver: webdriver, symbol: str, start_date: datetime, end_dat
 
                     # Get all data from the loaded table
                     try:
-                        stock_table = driver.find_element(By.XPATH, '//*[@id="Col1-1-HistoricalDataTable-Proxy"]/section/div[2]/table')
+                        stock_table = driver.find_element(By.XPATH,
+                                                          '//*[@id="Col1-1-HistoricalDataTable-Proxy"]/section/div[2]/table')
                     except selenium.common.exceptions.NoSuchElementException:
                         driver.refresh()
 
@@ -320,7 +327,8 @@ def symbol_handler(driver: webdriver, symbol: str, start_date: datetime, end_dat
 
                         # Get all data from the loaded table
                         try:
-                            stock_table = driver.find_element(By.XPATH, '//*[@id="Col1-1-HistoricalDataTable-Proxy"]/section/div[2]/table')
+                            stock_table = driver.find_element(By.XPATH,
+                                                              '//*[@id="Col1-1-HistoricalDataTable-Proxy"]/section/div[2]/table')
                         except selenium.common.exceptions.NoSuchElementException:
                             driver.refresh()
 
@@ -438,14 +446,15 @@ def download_historical_data(symbols: str | List[str] | np.ndarray, start: str, 
         try:
             # Create DataFrame with downloaded data from webpage
             stock_table, start_to_file = symbol_handler(driver, symbols, start, end, frequency, database_name, [])
-            stock_df = data_converter(stock_table)
-            # Save downloaded data into csv file or return bare DataFrame
-            if save_database:
-                db_controller.save_into_database(conn, stock_df, symbols, start_to_file, end_to_file, frequency)
-            if 'test' in database_name:
-                driver.quit()
-                conn.close()
-                return stock_df
+            if stock_table is not None:
+                stock_df = data_converter(stock_table)
+                # Save downloaded data into csv file or return bare DataFrame
+                if save_database:
+                    db_controller.save_into_database(conn, stock_df, symbols, start_to_file, end_to_file, frequency)
+                if 'test' in database_name:
+                    driver.quit()
+                    conn.close()
+                    return stock_df
         except TypeError:
             pass
 
@@ -457,7 +466,10 @@ def download_historical_data(symbols: str | List[str] | np.ndarray, start: str, 
             print(f'Download_func - symbol: {symbol}')
             # Download data for single symbol
             try:
-                stock_df, start_to_file = symbol_handler(driver, symbol, start, end, frequency, database_name, incorrect_symbols)
+                stock_df, start_to_file = symbol_handler(driver, symbol, start, end, frequency, database_name,
+                                                         incorrect_symbols)
+                if stock_df is None:
+                    continue
                 stock_df = data_converter(stock_df)
                 if save_database:
                     # Save data to the database and append to the shared DataFrame
@@ -571,8 +583,9 @@ def update_historical_data(symbols: str | List[str] | np.ndarray, frequency: str
     else:
         return updated_data
 
+
 # TODO: Run lambda function in AWS at night when stock market is closed and new day starts,
-#  ex. for 27.11.2023 script should be involved at 28.11.2023
+#  ex. for 27.11.2023 script should be evoked at 28.11.2023
 
 
 if __name__ == '__main__':
